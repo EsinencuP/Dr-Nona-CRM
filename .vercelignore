@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.vercel
+.next
+node_modules
+database/*.db
+database/*.db-journal
+coverage
+playwright-report
+test-results
+*.log

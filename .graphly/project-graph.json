@@ -22,6 +22,7 @@
     { "id": "catalog.external", "repository": "EsinencuP/Dr-Nona", "kind": "external-frontend" },
     { "id": "toolchain.node", "path": ".nvmrc", "kind": "toolchain" },
     { "id": "ci.workflow", "path": ".github/workflows/ci.yml", "kind": "continuous-integration" },
+    { "id": "deploy.ignore", "path": ".vercelignore", "kind": "deployment-config" },
     { "id": "tests.unit", "path": "tests/unit", "kind": "tests" }
   ],
   "edges": [
@@ -42,6 +43,7 @@
     { "from": "ci.workflow", "to": "database.schema", "type": "validates" },
     { "from": "ci.workflow", "to": "crm.pages", "type": "builds" },
     { "from": "ci.workflow", "to": "tests.unit", "type": "runs" },
+    { "from": "deploy.ignore", "to": "database.schema", "type": "excludes-local-database-artifacts" },
     { "from": "tests.unit", "to": "api.applications.handler", "type": "covers" },
     { "from": "tests.unit", "to": "api.webhook.handler", "type": "covers" },
     { "from": "tests.unit", "to": "service.persistence", "type": "covers" }
