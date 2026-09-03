@@ -23,17 +23,19 @@
 ```powershell
 npm ci
 Copy-Item .env.example .env
+npx neon@latest env pull --branch development --file .env --env DATABASE_URL,DATABASE_URL_UNPOOLED
 npm run db:generate
-npm run db:push
+npm run db:migrate:deploy
 npm run dev
 ```
 
-CRM откроется на `http://127.0.0.1:3001`. Локальная SQLite-база создаётся как `database/dev.db` и не отслеживается Git.
+CRM откроется на `http://127.0.0.1:3001`. Приложение использует PostgreSQL; локальная разработка подключается к отдельной Neon-ветке `development`, а не к production database.
 
 ## Environment variables
 
 ```dotenv
-DATABASE_URL="file:./dev.db"
+DATABASE_URL="postgresql://USER:PASSWORD@HOST-pooler/DB?sslmode=require"
+DATABASE_URL_UNPOOLED="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"
 CRM_BASIC_USER=""
 CRM_BASIC_PASSWORD=""
 CONTACT_ALLOWED_ORIGINS="http://127.0.0.1:4173"
@@ -69,7 +71,7 @@ npm run build
 
 ## Production
 
-Репозиторий деплоится с корня. Для Vercel необходимо заменить локальную SQLite-конфигурацию постоянной PostgreSQL-базой до production-запуска; файловая SQLite внутри serverless deployment не является надёжным хранилищем.
+Репозиторий деплоится с корня. В Vercel `DATABASE_URL` должен содержать pooled PostgreSQL URL приложения, а `DATABASE_URL_UNPOOLED` — direct URL для Prisma migrations.
 
 В e-catalog задайте `CRM_APPLICATIONS_API_URL=https://<crm-domain>/api/applications` и `VITE_CRM_URL=https://<crm-domain>/dashboard`. В CRM задайте production-origin e-catalog в `CONTACT_ALLOWED_ORIGINS`.
 

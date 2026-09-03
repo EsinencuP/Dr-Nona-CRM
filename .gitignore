@@ -37,10 +37,13 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Neon local project context
+.neon
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
-# local database
+# legacy local SQLite database
 /database/dev.db
 /database/dev.db-journal

@@ -40,6 +40,26 @@ export type DbWriteResult = { success: true; orderId: string } | { success: fals
 
 export type OrderStatus = "NEW" | "PROCESSING" | "DELIVERY" | "DONE" | "CANCELLED";
 
+export async function deleteOrderFromDb(orderId: string, db: PrismaClient = getDbClient()): Promise<boolean> {
+  const existing = await db.order.findUnique({
+    where: { id: orderId },
+    select: { clientId: true },
+  });
+  if (!existing) return false;
+
+  await db.$transaction(async (transaction) => {
+    await transaction.orderItem.deleteMany({ where: { orderId } });
+    await transaction.order.delete({ where: { id: orderId } });
+
+    const remainingOrders = await transaction.order.count({ where: { clientId: existing.clientId } });
+    if (remainingOrders === 0) {
+      await transaction.client.delete({ where: { id: existing.clientId } });
+    }
+  });
+
+  return true;
+}
+
 export async function saveApplicationToDb(
   input: DbWriteInput,
   db: PrismaClient = getDbClient(),

@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "vitest";
 
 import {
+  deleteOrderFromDb,
   getDbClient,
   type OrderStatus,
   saveApplicationToDb,
@@ -88,5 +89,10 @@ describe("database and status integration", () => {
         select: { status: true },
       }),
     ).resolves.toEqual({ status: "DONE" });
-  });
+
+    await expect(deleteOrderFromDb(orderId, db)).resolves.toBe(true);
+    await expect(deleteOrderFromDb(orderId, db)).resolves.toBe(false);
+    await expect(db.order.findUnique({ where: { id: orderId } })).resolves.toBeNull();
+    await expect(db.client.findUnique({ where: { phoneNormalized: testPhoneNormalized } })).resolves.toBeNull();
+  }, 20_000);
 });

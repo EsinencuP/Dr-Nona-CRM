@@ -1,11 +1,22 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 import { useRouter } from "next/navigation";
 
-import { Clock3, Mail, MapPin, PackageOpen, Phone } from "lucide-react";
+import { Clock3, Mail, MapPin, PackageOpen, Phone, RefreshCw, Trash2 } from "lucide-react";
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,7 +25,9 @@ import type { OrderStatus, OrdersResult, OrderView } from "@/lib/crm-types";
 import { ORDER_STATUSES } from "@/lib/crm-types";
 
 import { StatusBadge } from "../../_components/status-badge";
-import { updateOrderStatus } from "../../actions";
+import { deleteOrder, updateOrderStatus } from "../../actions";
+
+const AUTO_REFRESH_MS = 10_000;
 
 function OrderDetail({ order }: { order: OrderView }) {
   const total = order.items.reduce((sum, item) => sum + item.priceAtPurchase * item.quantity, 0);
@@ -187,8 +200,21 @@ function OrderDetail({ order }: { order: OrderView }) {
 export function OrdersTable({ result }: { result: OrdersResult }) {
   const router = useRouter();
   const [selected, setSelected] = useState<OrderView | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<OrderView | null>(null);
   const [message, setMessage] = useState("");
   const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    const refreshVisiblePage = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    const intervalId = window.setInterval(refreshVisiblePage, AUTO_REFRESH_MS);
+    window.addEventListener("focus", refreshVisiblePage);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisiblePage);
+    };
+  }, [router]);
 
   function changeStatus(order: OrderView, status: OrderStatus) {
     setMessage("");
@@ -203,18 +229,47 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
     });
   }
 
+  function removeOrder() {
+    if (!deleteTarget) return;
+    const orderId = deleteTarget.id;
+    setMessage("");
+    startTransition(() => {
+      void deleteOrder(orderId).then((response) => {
+        setMessage(response.message);
+        if (response.ok) {
+          setSelected((current) => (current?.id === orderId ? null : current));
+          setDeleteTarget(null);
+          router.refresh();
+        }
+      });
+    });
+  }
+
   if (result.rows.length === 0) {
     return (
       <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border bg-white px-6 text-center">
         <PackageOpen className="size-9 text-primary" aria-hidden="true" />
         <h2 className="mt-3 font-extrabold text-xl tracking-[-0.02em]">Заявки не найдены</h2>
         <p className="mt-1 text-muted-foreground text-sm">Измените фильтры или дождитесь нового обращения.</p>
+        <Button className="mt-4" variant="outline" onClick={() => router.refresh()} disabled={pending}>
+          <RefreshCw className={pending ? "animate-spin" : undefined} aria-hidden="true" />
+          Обновить список
+        </Button>
       </div>
     );
   }
 
   return (
     <>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-3 py-2">
+        <p className="text-muted-foreground text-xs">
+          Новые заявки появляются автоматически — не позднее чем через 10 секунд.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => router.refresh()} disabled={pending}>
+          <RefreshCw className={pending ? "animate-spin" : undefined} aria-hidden="true" />
+          Обновить сейчас
+        </Button>
+      </div>
       <ul className="space-y-3 md:hidden" aria-label="Список заявок">
         {result.rows.map((order) => (
           <li key={order.id} className="crm-panel overflow-hidden rounded-xl border bg-white">
@@ -255,7 +310,7 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
                   "Без товарных позиций"}
               </span>
             </button>
-            <div className="flex items-center gap-3 border-t bg-slate-50/70 px-4 py-3">
+            <div className="flex items-center gap-2 border-t bg-slate-50/70 px-4 py-3">
               <label className="shrink-0 font-bold text-muted-foreground text-xs" htmlFor={`status-mobile-${order.id}`}>
                 Статус
               </label>
@@ -272,6 +327,15 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
+              <Button
+                variant="destructive"
+                size="icon-lg"
+                aria-label={`Удалить заявку ${order.id.slice(0, 8)}`}
+                onClick={() => setDeleteTarget(order)}
+                disabled={pending}
+              >
+                <Trash2 aria-hidden="true" />
+              </Button>
             </div>
           </li>
         ))}
@@ -287,6 +351,9 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
               <TableHead>Тип</TableHead>
               <TableHead>Состав / Тема</TableHead>
               <TableHead>Статус</TableHead>
+              <TableHead className="w-14">
+                <span className="sr-only">Действия</span>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -333,6 +400,17 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
                     ))}
                   </NativeSelect>
                 </TableCell>
+                <TableCell>
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    aria-label={`Удалить заявку ${order.id.slice(0, 8)}`}
+                    onClick={() => setDeleteTarget(order)}
+                    disabled={pending}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -369,6 +447,29 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      <AlertDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open && !pending) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Удалить заявку безвозвратно?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Заявка #{deleteTarget?.id.slice(0, 8)} и её товарные позиции будут удалены. Если у клиента нет других
+              заявок, его тестовая карточка также будет удалена.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Отмена</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={removeOrder} disabled={pending}>
+              {pending ? "Удаление…" : "Удалить заявку"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

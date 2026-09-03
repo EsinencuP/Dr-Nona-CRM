@@ -8,6 +8,11 @@
     { "id": "crm.shell", "path": "src/app/(crm)/_components/crm-shell.tsx", "kind": "shell" },
     { "id": "crm.pages", "path": "src/app/(crm)", "kind": "pages" },
     { "id": "crm.actions", "path": "src/app/(crm)/actions.ts", "kind": "server-actions" },
+    {
+      "id": "crm.orders.table",
+      "path": "src/app/(crm)/orders/_components/orders-table.tsx",
+      "kind": "interactive-component"
+    },
     { "id": "api.applications.route", "path": "src/app/api/applications/route.ts", "kind": "route" },
     { "id": "api.webhook.route", "path": "src/app/api/telegram-webhook/route.ts", "kind": "route" },
     { "id": "api.applications.handler", "path": "server/api/applications-handler.ts", "kind": "handler" },
@@ -19,6 +24,12 @@
     { "id": "catalog.snapshot", "path": "src/data/products.json", "kind": "data" },
     { "id": "database.schema", "path": "database/schema.prisma", "kind": "database" },
     { "id": "database.migrations", "path": "database/migrations", "kind": "database-migrations" },
+    {
+      "id": "database.production",
+      "provider": "Neon Postgres",
+      "project": "wispy-credit-99996684",
+      "kind": "managed-database"
+    },
     { "id": "catalog.external", "repository": "EsinencuP/Dr-Nona", "kind": "external-frontend" },
     { "id": "toolchain.node", "path": ".nvmrc", "kind": "toolchain" },
     { "id": "ci.workflow", "path": ".github/workflows/ci.yml", "kind": "continuous-integration" },
@@ -28,6 +39,7 @@
   "edges": [
     { "from": "crm.shell", "to": "crm.pages", "type": "hosts" },
     { "from": "crm.pages", "to": "crm.actions", "type": "invokes" },
+    { "from": "crm.orders.table", "to": "crm.actions", "type": "refreshes-updates-deletes" },
     { "from": "crm.actions", "to": "service.persistence", "type": "reads-writes" },
     { "from": "api.applications.route", "to": "api.applications.handler", "type": "delegates" },
     { "from": "api.webhook.route", "to": "api.webhook.handler", "type": "delegates" },
@@ -38,6 +50,8 @@
     { "from": "service.applications", "to": "service.telegram", "type": "sends" },
     { "from": "service.persistence", "to": "database.schema", "type": "generated-from" },
     { "from": "database.migrations", "to": "database.schema", "type": "migrates" },
+    { "from": "database.schema", "to": "database.production", "type": "persists-to" },
+    { "from": "database.migrations", "to": "database.production", "type": "deploys-to" },
     { "from": "catalog.external", "to": "catalog.snapshot", "type": "syncs" },
     { "from": "toolchain.node", "to": "ci.workflow", "type": "configures" },
     { "from": "ci.workflow", "to": "database.schema", "type": "validates" },

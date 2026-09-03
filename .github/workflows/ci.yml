@@ -12,8 +12,23 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: prisma
+          POSTGRES_PASSWORD: prisma
+          POSTGRES_DB: crm_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prisma -d crm_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
-      DATABASE_URL: file:./ci.db
+      DATABASE_URL: postgresql://prisma:prisma@localhost:5432/crm_test?schema=public
+      DATABASE_URL_UNPOOLED: postgresql://prisma:prisma@localhost:5432/crm_test?schema=public
       CRM_BASIC_USER: ci-user
       CRM_BASIC_PASSWORD: ci-password
 
@@ -34,7 +49,7 @@ jobs:
         run: npm run db:generate
 
       - name: Prepare test database
-        run: npm run db:push
+        run: npm run db:migrate:deploy
 
       - name: Typecheck
         run: npm run typecheck

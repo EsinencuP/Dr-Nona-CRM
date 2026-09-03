@@ -19,6 +19,8 @@
     "test": "vitest run",
     "db:generate": "prisma generate --schema database/schema.prisma",
     "db:push": "prisma db push --schema database/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy --schema database/schema.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema database/schema.prisma",
     "sync:catalog": "node scripts/sync-shared-data.mjs"
   },
   "dependencies": {

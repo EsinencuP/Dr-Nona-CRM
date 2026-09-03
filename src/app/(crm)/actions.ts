@@ -19,6 +19,8 @@ import { prisma } from "@/lib/prisma";
 import { getProductName, products } from "@/lib/products";
 import { requireCrmAccess } from "@/server/crm-auth";
 
+import { deleteOrderFromDb } from "../../../server/applications/application-db";
+
 const statusSchema = z.enum(ORDER_STATUSES);
 const typeSchema = z.enum(ORDER_TYPES);
 const rangeSchema = z.enum(["7d", "30d", "all"]);
@@ -280,6 +282,22 @@ export async function updateOrderStatus(orderId: string, nextStatus: string) {
   revalidatePath("/orders");
   revalidatePath("/clients");
   return { ok: true, message: "Статус обновлён." };
+}
+
+export async function deleteOrder(orderId: string) {
+  await requireCrmAccess();
+  const parsedId = z.string().trim().min(1).max(100).safeParse(orderId);
+  if (!parsedId.success) {
+    return { ok: false, message: "Некорректный идентификатор заявки." };
+  }
+
+  const deleted = await deleteOrderFromDb(parsedId.data, prisma);
+  if (!deleted) return { ok: false, message: "Заявка уже удалена или не найдена." };
+
+  revalidatePath("/dashboard");
+  revalidatePath("/orders");
+  revalidatePath("/clients");
+  return { ok: true, message: "Заявка удалена." };
 }
 
 export async function getClients(search = ""): Promise<ClientView[]> {
