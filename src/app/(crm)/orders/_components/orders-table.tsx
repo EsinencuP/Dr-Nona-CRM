@@ -247,15 +247,20 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
 
   if (result.rows.length === 0) {
     return (
-      <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border bg-white px-6 text-center">
-        <PackageOpen className="size-9 text-primary" aria-hidden="true" />
-        <h2 className="mt-3 font-extrabold text-xl tracking-[-0.02em]">Заявки не найдены</h2>
-        <p className="mt-1 text-muted-foreground text-sm">Измените фильтры или дождитесь нового обращения.</p>
-        <Button className="mt-4" variant="outline" onClick={() => router.refresh()} disabled={pending}>
-          <RefreshCw className={pending ? "animate-spin" : undefined} aria-hidden="true" />
-          Обновить список
-        </Button>
-      </div>
+      <>
+        <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border bg-white px-6 text-center">
+          <PackageOpen className="size-9 text-primary" aria-hidden="true" />
+          <h2 className="mt-3 font-extrabold text-xl tracking-[-0.02em]">Заявки не найдены</h2>
+          <p className="mt-1 text-muted-foreground text-sm">Измените фильтры или дождитесь нового обращения.</p>
+          <Button className="mt-4" variant="outline" onClick={() => router.refresh()} disabled={pending}>
+            <RefreshCw className={pending ? "animate-spin" : undefined} aria-hidden="true" />
+            Обновить список
+          </Button>
+        </div>
+        <p className="mt-2 min-h-5 text-muted-foreground text-xs" aria-live="polite">
+          {message}
+        </p>
+      </>
     );
   }
 
