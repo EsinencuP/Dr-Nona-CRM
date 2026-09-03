@@ -124,6 +124,21 @@ export async function processApplication(
     dbSuccess: dbResult.success,
     ...(!dbResult.success && { dbError: dbResult.error }),
   });
+  if (!dbResult.success) {
+    dependencies.logger?.({
+      event: "application.delivery.completed",
+      requestId,
+      type: record.type,
+      telegramStatus: "skipped",
+      durationMs: Date.now() - startedAt,
+    });
+    return {
+      requestId,
+      type: record.type,
+      delivery: { telegram: "failed" },
+      outcome: "failure",
+    };
+  }
   const message = formatTelegramApplication(record);
   const telegramResult = await dependencies.sendTelegram(record, message).catch(() => undefined);
   if (dbResult.success && telegramResult?.status === "sent" && telegramResult.providerMessageId) {

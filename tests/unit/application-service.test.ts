@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 
-import { processApplication } from "../../server/applications/application-service";
+import { type ApplicationServiceDependencies, processApplication } from "../../server/applications/application-service";
 import type { ProviderResult } from "../../server/applications/application-types";
 import type { ApplicationInput } from "../../shared/applications/application-schema";
 import { MASTERCLASS_TOPICS } from "../../shared/constants/masterclass-topics";
@@ -45,7 +45,7 @@ function dependencies(telegram: () => Promise<ProviderResult>) {
     createRequestId: () => "request-fixed",
     now: () => new Date("2030-01-01T00:00:00.000Z"),
     logger: vi.fn(),
-    saveApplication: vi.fn(async () => ({
+    saveApplication: vi.fn<NonNullable<ApplicationServiceDependencies["saveApplication"]>>(async () => ({
       success: true as const,
       orderId: "request-fixed",
     })),
@@ -61,6 +61,17 @@ describe("application service", () => {
   ])("returns %s for Telegram result", async (outcome, telegram) => {
     const result = await processApplication(input, dependencies(telegram));
     expect(result.outcome).toBe(outcome);
+  });
+
+  test("does not send Telegram or report success when persistence fails", async () => {
+    const deps = dependencies(() => Promise.resolve(sent()));
+    deps.saveApplication = vi.fn(async () => ({ success: false as const, error: "database unavailable" }));
+
+    const result = await processApplication(input, deps);
+
+    expect(result).toMatchObject({ outcome: "failure", delivery: { telegram: "failed" } });
+    expect(deps.sendTelegram).not.toHaveBeenCalled();
+    expect(deps.saveMessageId).not.toHaveBeenCalled();
   });
 
   test("uses the server request ID in the Telegram message", async () => {
