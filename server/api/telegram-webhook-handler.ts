@@ -1,13 +1,13 @@
-import { type OrderStatus, updateOrderStatusByTelegramMessageId } from "../server/applications/application-db";
+import { type OrderStatus, updateOrderStatusByTelegramMessageId } from "../applications/application-db";
 import {
   replaceAnyStatus,
   STATUS_CANCELLED,
   STATUS_DELIVERY,
   STATUS_DONE,
   STATUS_PROCESSING,
-} from "../server/applications/format-application";
-import { deleteTelegramMessage, editTelegramMessage } from "../server/applications/providers/telegram-edit";
-import { jsonResponse } from "../server/http/json-response";
+} from "../applications/format-application";
+import { deleteTelegramMessage, editTelegramMessage } from "../applications/providers/telegram-edit";
+import { jsonResponse } from "../http/json-response";
 
 const DONE_KEYWORDS = new Set(["ok", "ок", "готово", "сделано", "done", "ready", "выполнено"]);
 

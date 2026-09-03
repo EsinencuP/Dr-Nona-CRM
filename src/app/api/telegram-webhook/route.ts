@@ -1,4 +1,4 @@
-import { createTelegramWebhookHandler } from "../../../../api/telegram-webhook";
+import { createTelegramWebhookHandler } from "../../../../server/api/telegram-webhook-handler";
 
 const handleTelegramWebhook = createTelegramWebhookHandler();
 

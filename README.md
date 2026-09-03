@@ -8,6 +8,7 @@
 |---|---|
 | `src/app/(crm)/` | Dashboard, заявки, клиенты и внутренний каталог |
 | `src/app/api/` | Публичный приём заявок и Telegram webhook |
+| `server/api/` | Внутренние обработчики, вызываемые только Next.js API routes |
 | `server/` | Валидация, application service, Telegram и persistence logic |
 | `shared/` | Схема payload и общие Moldova-справочники |
 | `database/` | Каноническая Prisma-схема и миграции |

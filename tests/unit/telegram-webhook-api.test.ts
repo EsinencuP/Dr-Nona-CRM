@@ -4,7 +4,7 @@ import {
   createTelegramWebhookHandler,
   parseManagerStatusCommand,
   type TelegramUpdate,
-} from "../../api/telegram-webhook.js";
+} from "../../server/api/telegram-webhook-handler";
 import type { OrderStatus } from "../../server/applications/application-db.js";
 import { STATUS_DELIVERY, STATUS_PENDING, STATUS_PROCESSING } from "../../server/applications/format-application.js";
 

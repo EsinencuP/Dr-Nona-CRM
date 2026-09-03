@@ -1,4 +1,4 @@
-import { createApplicationsHandler } from "../../../../api/applications";
+import { createApplicationsHandler } from "../../../../server/api/applications-handler";
 
 const handleApplication = createApplicationsHandler();
 

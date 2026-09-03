@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 
-import { type ApplicationsHandlerDependencies, createApplicationsHandler } from "../../api/applications";
+import { type ApplicationsHandlerDependencies, createApplicationsHandler } from "../../server/api/applications-handler";
 import type { ApplicationServiceResult } from "../../server/applications/application-types";
 import type { ContactEnvironment } from "../../server/config/contact-env";
 import { createApplicationRateLimitGuard } from "../../server/http/application-rate-limit";

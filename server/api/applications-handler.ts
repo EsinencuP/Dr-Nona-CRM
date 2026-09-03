@@ -1,11 +1,11 @@
-import { processApplication } from "../server/applications/application-service";
-import type { ApplicationProduct } from "../server/applications/application-types";
-import { sendTelegramApplication } from "../server/applications/providers/telegram-provider";
-import { type ContactEnvironment, readContactEnvironment } from "../server/config/contact-env";
-import { applicationRateLimitGuard, type RateLimitDecision } from "../server/http/application-rate-limit";
-import { jsonResponse } from "../server/http/json-response";
-import { readJsonBody, requestOriginIsAllowed } from "../server/http/request-validation";
-import { validateApplicationInput } from "../shared/applications/application-schema";
+import { validateApplicationInput } from "../../shared/applications/application-schema";
+import { processApplication } from "../applications/application-service";
+import type { ApplicationProduct } from "../applications/application-types";
+import { sendTelegramApplication } from "../applications/providers/telegram-provider";
+import { type ContactEnvironment, readContactEnvironment } from "../config/contact-env";
+import { applicationRateLimitGuard, type RateLimitDecision } from "../http/application-rate-limit";
+import { jsonResponse } from "../http/json-response";
+import { readJsonBody, requestOriginIsAllowed } from "../http/request-validation";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -13,7 +13,7 @@ type ProductRecord = ApplicationProduct & {
   publicationStatus: string;
   editorialStatus: string;
 };
-const productsJson = require("../src/data/products.json") as ProductRecord[];
+const productsJson = require("../../src/data/products.json") as ProductRecord[];
 
 const availableProducts = productsJson.filter(
   (product) => product.publicationStatus === "published" && product.editorialStatus === "ready",
