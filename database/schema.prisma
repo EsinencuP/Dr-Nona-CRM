@@ -1,0 +1,101 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── TABLE 1: Client ───────────────────────────────────────────────────────
+// One row per unique customer. Deduplication key = phoneNormalized.
+// When a new order arrives with the same phoneNormalized, we UPSERT:
+// update existing client data, then create a new Order linked to this client.
+model Client {
+  id              String   @id @default(uuid())
+  firstName       String
+  lastName        String
+  phone           String                       // Raw phone as entered by user
+  phoneNormalized String   @unique              // Normalized: "+37369123456"
+  email           String?                      // Optional
+  region          String                       // Moldova region from dropdown
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  orders          Order[]
+
+  @@index([region])                            // For future "sales by region" reports
+}
+
+// ─── TABLE 2: Order ────────────────────────────────────────────────────────
+// One row per incoming request (order / consultation / masterclass).
+// Status lifecycle: NEW → PROCESSING → DELIVERY → DONE | CANCELLED
+// UTM fields are filled automatically from URL params (server reads them from body).
+model Order {
+  id                  String   @id @default(uuid())
+  clientId            String
+  type                String                   // "order" | "consultation" | "masterclass"
+  status              String   @default("NEW") // "NEW" | "PROCESSING" | "DELIVERY" | "DONE" | "CANCELLED"
+
+  // Optional fields — filled depending on request type
+  comment             String?                  // Free-text comment from client
+  preferredCallTime   String?                  // e.g. "After 18:00"
+  eventDate           String?                  // "2026-09-05" (consultation / masterclass)
+  eventTime           String?                  // "14:00"
+  masterclassTopic    String?                  // Only for type="masterclass"
+  consultationMode    String?                  // "online" | "offline"
+
+  // Marketing analytics — collected automatically from URL
+  utmSource           String?                  // e.g. "facebook", "instagram", "google"
+  utmMedium           String?                  // e.g. "cpc", "story", "organic"
+  utmCampaign         String?                  // e.g. "solaris_promo_august"
+  utmContent          String?                  // e.g. "blue_banner"
+
+  // Behavior analytics
+  entryPoint          String?                  // URL of the page where form was submitted
+  sessionHistory      String?                  // JSON string: ["slug1", "slug2"] — product views before order
+
+  // Telegram sync — needed to update status when manager replies
+  telegramMessageId   String?  @unique         // message_id returned by Telegram sendMessage API
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  client              Client   @relation(fields: [clientId], references: [id])
+  items               OrderItem[]
+
+  @@index([clientId])                          // Fast lookup of all orders by one client
+  @@index([createdAt])                         // For time-range queries (seasonality reports)
+  @@index([status, createdAt])                 // For CRM list: filter by status + sort by date
+  @@index([utmSource])                         // For marketing channel performance reports
+}
+
+// ─── TABLE 3: OrderItem ────────────────────────────────────────────────────
+// One row per product line in an order.
+// productSlug matches the slug field in products.json on the frontend.
+// priceAtPurchase is the internal price AT THE TIME of the order (snapshot).
+// Default is 0.0 — prices will be entered later when CRM is launched.
+model OrderItem {
+  id               String   @id @default(uuid())
+  orderId          String
+  productSlug      String                       // e.g. "solaris-body-lotion"
+  quantity         Int      @default(1)         // Number of units ordered
+  priceAtPurchase  Float    @default(0.0)       // Internal price snapshot (hidden from clients)
+
+  order            Order    @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])                           // Fast lookup of all items in one order
+  @@index([productSlug])                       // For "popularity by product" reports
+}
+
+// ─── TABLE 4: ProductCatalog ───────────────────────────────────────────────
+// Internal price registry. Prices are NEVER shown on the website.
+// This table is a stub — prices will be entered manually via CRM later.
+// slug must match the product slug from products.json exactly.
+model ProductCatalog {
+  slug          String   @id                   // e.g. "solaris-body-lotion"
+  sku           String                         // e.g. "413001"
+  internalPrice Float    @default(0.0)         // Internal cost for revenue calculation
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
