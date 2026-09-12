@@ -21,7 +21,10 @@
     "db:push": "prisma db push --schema database/schema.prisma",
     "db:migrate:deploy": "prisma migrate deploy --schema database/schema.prisma",
     "db:migrate:dev": "prisma migrate dev --schema database/schema.prisma",
-    "sync:catalog": "node scripts/sync-shared-data.mjs"
+    "sync:catalog": "node scripts/sync-shared-data.mjs",
+    "demo:analytics:plan": "node scripts/seed-demo-analytics.mjs --dry-run",
+    "demo:analytics:seed": "node scripts/seed-demo-analytics.mjs",
+    "demo:analytics:cleanup": "node scripts/seed-demo-analytics.mjs --cleanup"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
