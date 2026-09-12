@@ -20,11 +20,11 @@ import { getProductName, products } from "@/lib/products";
 import { requireCrmAccess } from "@/server/crm-auth";
 
 import { deleteOrderFromDb } from "../../../server/applications/application-db";
+import { fixedPriceSchema } from "../../../server/catalog/fixed-prices";
+import { aggregateDashboard, normalizeRange, startDateForRange } from "./dashboard/_components/dashboard-data";
 
 const statusSchema = z.enum(ORDER_STATUSES);
 const typeSchema = z.enum(ORDER_TYPES);
-const rangeSchema = z.enum(["7d", "30d", "all"]);
-const priceSchema = z.coerce.number().finite().min(0).max(1_000_000);
 
 type OrderFilters = {
   status?: string;
@@ -57,105 +57,68 @@ function parseHistory(value: string | null) {
   }
 }
 
-function startDateForRange(range: DashboardRange) {
-  if (range === "all") return undefined;
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - (range === "7d" ? 6 : 29));
-  return start;
-}
-
-function timelineKey(date: Date, range: DashboardRange) {
-  if (range === "all") {
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-  }
-  return date.toISOString().slice(0, 10);
-}
-
-function timelineLabel(key: string, range: DashboardRange) {
-  const date = range === "all" ? new Date(`${key}-01T12:00:00`) : new Date(`${key}T12:00:00`);
-  return new Intl.DateTimeFormat("ru-MD", {
-    month: range === "all" ? "short" : "numeric",
-    day: range === "all" ? undefined : "numeric",
-    year: range === "all" ? "2-digit" : undefined,
-  }).format(date);
-}
-
 export async function getDashboardStats(requestedRange: DashboardRange): Promise<DashboardStats> {
   await requireCrmAccess();
-  const range = rangeSchema.catch("30d").parse(requestedRange);
-  const startDate = startDateForRange(range);
-
-  const [total, processing, delivery, done, timelineOrders, locationOrders, sources, topProducts, doneOrders] =
-    await Promise.all([
-      prisma.order.count(),
-      prisma.order.count({ where: { status: "PROCESSING" } }),
-      prisma.order.count({ where: { status: "DELIVERY" } }),
-      prisma.order.count({ where: { status: "DONE" } }),
+  const range = normalizeRange(requestedRange);
+  const now = new Date();
+  const start = startDateForRange(range, now);
+  const previousStart = start ? new Date(2 * start.getTime() - now.getTime()) : undefined;
+  const [orders, statuses, newClients, previousNewClients, recent] = await prisma.$transaction(
+    [
       prisma.order.findMany({
-        where: startDate ? { createdAt: { gte: startDate } } : undefined,
-        select: { createdAt: true },
-        orderBy: { createdAt: "asc" },
+        where: { createdAt: { gte: previousStart, lt: now } },
+        select: {
+          createdAt: true,
+          status: true,
+          type: true,
+          utmSource: true,
+          client: { select: { region: true } },
+          items: {
+            select: {
+              productSlug: true,
+              quantity: true,
+              retailPriceAtPurchase: true,
+              distributorPriceAtPurchase: true,
+            },
+          },
+        },
       }),
-      prisma.order.findMany({ select: { client: { select: { region: true } } } }),
-      prisma.order.groupBy({ by: ["utmSource"], _count: { _all: true }, orderBy: { _count: { utmSource: "desc" } } }),
-      prisma.orderItem.groupBy({
-        by: ["productSlug"],
-        _sum: { quantity: true },
-        orderBy: { _sum: { quantity: "desc" } },
-        take: 10,
+      prisma.order.groupBy({ by: ["status"], where: { createdAt: { lt: now } }, _count: { _all: true } }),
+      prisma.client.count({ where: { createdAt: { gte: start, lt: now } } }),
+      prisma.client.count({ where: { createdAt: { gte: previousStart, lt: start ?? new Date(0) } } }),
+      prisma.order.findMany({
+        where: { createdAt: { gte: start, lt: now } },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 8,
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          createdAt: true,
+          client: { select: { firstName: true, lastName: true } },
+          items: { select: { productSlug: true } },
+        },
       }),
-      prisma.order.findMany({ where: { status: "DONE" }, select: { items: true } }),
-    ]);
-
-  const timelineMap = new Map<string, number>();
-  for (const order of timelineOrders) {
-    const key = timelineKey(order.createdAt, range);
-    timelineMap.set(key, (timelineMap.get(key) ?? 0) + 1);
-  }
-
-  if (range !== "all") {
-    const days = range === "7d" ? 7 : 30;
-    for (let offset = days - 1; offset >= 0; offset -= 1) {
-      const date = new Date();
-      date.setHours(12, 0, 0, 0);
-      date.setDate(date.getDate() - offset);
-      const key = timelineKey(date, range);
-      if (!timelineMap.has(key)) timelineMap.set(key, 0);
-    }
-  }
-
-  const regionMap = new Map<string, number>();
-  for (const order of locationOrders) {
-    const region = order.client.region.trim() || "Не указан";
-    regionMap.set(region, (regionMap.get(region) ?? 0) + 1);
-  }
-
-  const completedTurnover = doneOrders.reduce(
-    (orderTotal, order) =>
-      orderTotal + order.items.reduce((itemTotal, item) => itemTotal + item.priceAtPurchase * item.quantity, 0),
-    0,
+    ],
+    { isolationLevel: "RepeatableRead" },
   );
-
-  return {
-    kpis: { total, processing, delivery, done },
-    timeline: [...timelineMap.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, orders]) => ({ label: timelineLabel(key, range), orders })),
-    regions: [...regionMap.entries()]
-      .sort((left, right) => right[1] - left[1])
-      .map(([region, orders]) => ({ region, orders })),
-    sources: sources.map((source) => ({
-      source: source.utmSource?.trim() || "Прямой трафик",
-      orders: source._count._all,
+  return aggregateDashboard({
+    orders,
+    range,
+    now,
+    newClients,
+    previousNewClients,
+    statuses: statuses.map((row) => ({ status: row.status, count: row._count._all })),
+    productNames: new Map(products.map((product) => [product.slug, product.name])),
+    recentOrders: recent.map((order) => ({
+      id: order.id,
+      clientName: `${order.client.firstName} ${order.client.lastName}`.trim(),
+      type: order.type,
+      status: toStatus(order.status),
+      createdAt: order.createdAt.toISOString(),
+      productNames: order.items.map((item) => getProductName(item.productSlug)),
     })),
-    products: topProducts.map((product) => ({
-      slug: product.productSlug,
-      name: getProductName(product.productSlug),
-      quantity: product._sum.quantity ?? 0,
-    })),
-    completedTurnover,
-  };
+  });
 }
 
 export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResult> {
@@ -281,6 +244,7 @@ export async function updateOrderStatus(orderId: string, nextStatus: string) {
   revalidatePath("/dashboard");
   revalidatePath("/orders");
   revalidatePath("/clients");
+  revalidatePath("/results");
   return { ok: true, message: "Статус обновлён." };
 }
 
@@ -297,6 +261,7 @@ export async function deleteOrder(orderId: string) {
   revalidatePath("/dashboard");
   revalidatePath("/orders");
   revalidatePath("/clients");
+  revalidatePath("/results");
   return { ok: true, message: "Заявка удалена." };
 }
 
@@ -366,6 +331,8 @@ export async function getCatalogProducts(): Promise<CatalogProductView[]> {
     return {
       ...product,
       internalPrice: price?.internalPrice ?? 0,
+      retailPrice: price?.retailPrice ?? 0,
+      distributorPrice: price?.distributorPrice ?? 0,
       updatedAt: price?.updatedAt.toISOString() ?? null,
     };
   });
@@ -378,17 +345,22 @@ export async function updateProductPrice(
 ) {
   await requireCrmAccess();
   const product = products.find((candidate) => candidate.slug === slug);
-  const parsedPrice = priceSchema.safeParse(formData.get("internalPrice"));
-  if (!product || !parsedPrice.success) {
-    return { ok: false, message: "Проверьте внутреннюю цену." };
+  const retail = fixedPriceSchema.safeParse(formData.get("retailPrice"));
+  const distributor = fixedPriceSchema.safeParse(formData.get("distributorPrice"));
+  if (!product || !retail.success || !distributor.success) {
+    return {
+      ok: false,
+      message: "Укажите обе утверждённые цены: от 0,01 до 1 000 000 MDL, до двух знаков после запятой.",
+    };
   }
 
   await prisma.productCatalog.upsert({
     where: { slug },
-    create: { slug, sku: product.sku, internalPrice: parsedPrice.data },
-    update: { sku: product.sku, internalPrice: parsedPrice.data },
+    create: { slug, sku: product.sku, retailPrice: retail.data, distributorPrice: distributor.data },
+    update: { sku: product.sku, retailPrice: retail.data, distributorPrice: distributor.data },
   });
   revalidatePath("/catalog");
+  revalidatePath("/results");
   revalidatePath("/dashboard");
-  return { ok: true, message: "Цена сохранена." };
+  return { ok: true, message: "Утверждённые цены сохранены. Снимки старых заказов не изменены." };
 }

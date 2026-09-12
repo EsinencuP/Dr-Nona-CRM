@@ -38,7 +38,7 @@ export default async function CatalogPage({
   const requestedPage = Number.parseInt(page, 10);
   const currentPage = Number.isFinite(requestedPage) ? Math.min(Math.max(requestedPage, 1), pages) : 1;
   const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const configured = catalog.filter((product) => product.internalPrice > 0).length;
+  const configured = catalog.filter((product) => product.retailPrice > 0 && product.distributorPrice > 0).length;
 
   function pageHref(nextPage: number) {
     const params = new URLSearchParams();
@@ -96,38 +96,41 @@ export default async function CatalogPage({
       </form>
 
       <section className="crm-panel overflow-hidden rounded-xl border bg-white" aria-label="Товары и внутренние цены">
-        <div className="hidden grid-cols-[minmax(14rem,1.6fr)_7rem_9rem_9rem_minmax(16rem,1fr)] gap-3 border-b bg-slate-50/80 px-4 py-3 font-bold text-muted-foreground text-xs lg:grid">
+        <div className="hidden grid-cols-[minmax(10rem,1.5fr)_5rem_7rem_8rem_minmax(14rem,1fr)] gap-3 border-b bg-slate-50/80 px-4 py-3 font-bold text-muted-foreground text-xs xl:grid">
           <span>Товар</span>
           <span>SKU</span>
           <span>Категория</span>
-          <span>Текущая цена</span>
+          <span>Розница / закупка</span>
           <span>Редактирование, MDL</span>
         </div>
         <ul className="divide-y">
           {visible.map((product) => (
             <li
               key={product.slug}
-              className="grid gap-3 p-4 lg:grid-cols-[minmax(14rem,1.6fr)_7rem_9rem_9rem_minmax(16rem,1fr)] lg:items-center"
+              className="grid gap-3 p-4 xl:grid-cols-[minmax(10rem,1.5fr)_5rem_7rem_8rem_minmax(14rem,1fr)] xl:items-center"
             >
               <div className="min-w-0">
                 <strong className="block truncate text-sm">{product.name}</strong>
                 <span className="mt-0.5 block truncate text-muted-foreground text-xs">{product.slug}</span>
               </div>
-              <dl className="grid grid-cols-3 gap-2 lg:contents">
-                <div className="min-w-0 rounded-lg bg-muted/55 p-2 lg:rounded-none lg:bg-transparent lg:p-0">
-                  <dt className="font-bold text-[0.65rem] text-muted-foreground uppercase lg:hidden">SKU</dt>
-                  <dd className="mt-1 truncate font-mono text-xs lg:mt-0">{product.sku}</dd>
+              <dl className="grid grid-cols-3 gap-2 xl:contents">
+                <div className="min-w-0 rounded-lg bg-muted/55 p-2 xl:rounded-none xl:bg-transparent xl:p-0">
+                  <dt className="font-bold text-[0.65rem] text-muted-foreground uppercase xl:hidden">SKU</dt>
+                  <dd className="mt-1 truncate font-mono text-xs xl:mt-0">{product.sku}</dd>
                 </div>
-                <div className="min-w-0 rounded-lg bg-muted/55 p-2 lg:rounded-none lg:bg-transparent lg:p-0">
-                  <dt className="font-bold text-[0.65rem] text-muted-foreground uppercase lg:hidden">Категория</dt>
-                  <dd className="mt-1 truncate text-xs lg:mt-0 lg:text-sm">{product.category}</dd>
+                <div className="min-w-0 rounded-lg bg-muted/55 p-2 xl:rounded-none xl:bg-transparent xl:p-0">
+                  <dt className="font-bold text-[0.65rem] text-muted-foreground uppercase xl:hidden">Категория</dt>
+                  <dd className="mt-1 truncate text-xs xl:mt-0 xl:text-sm">{product.category}</dd>
                 </div>
-                <div className="min-w-0 rounded-lg bg-muted/55 p-2 lg:rounded-none lg:bg-transparent lg:p-0">
-                  <dt className="font-bold text-[0.65rem] text-muted-foreground uppercase lg:hidden">Цена</dt>
-                  <dd className="mt-1 lg:mt-0">
-                    <strong className="block truncate text-xs lg:text-sm">
-                      {product.internalPrice > 0 ? formatLei(product.internalPrice) : "Не задана"}
+                <div className="min-w-0 rounded-lg bg-muted/55 p-2 xl:rounded-none xl:bg-transparent xl:p-0">
+                  <dt className="font-bold text-[0.65rem] text-muted-foreground uppercase xl:hidden">Цена</dt>
+                  <dd className="mt-1 xl:mt-0">
+                    <strong className="block truncate text-xs xl:text-sm">
+                      {product.retailPrice > 0 ? formatLei(product.retailPrice) : "Не задана"}
                     </strong>
+                    <span className="block text-xs">
+                      {product.distributorPrice > 0 ? formatLei(product.distributorPrice) : "Закупка не задана"}
+                    </span>
                     {product.updatedAt ? (
                       <span className="mt-0.5 block truncate text-[0.66rem] text-muted-foreground">
                         {formatDate(product.updatedAt)}
@@ -136,8 +139,12 @@ export default async function CatalogPage({
                   </dd>
                 </div>
               </dl>
-              <div className="border-t pt-3 lg:border-0 lg:pt-0">
-                <PriceForm slug={product.slug} value={product.internalPrice} />
+              <div className="border-t pt-3 xl:border-0 xl:pt-0">
+                <PriceForm
+                  slug={product.slug}
+                  retailPrice={product.retailPrice}
+                  distributorPrice={product.distributorPrice}
+                />
               </div>
             </li>
           ))}

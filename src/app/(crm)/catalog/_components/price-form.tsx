@@ -9,23 +9,45 @@ import { updateProductPrice } from "../../actions";
 
 const initialState = { ok: false, message: "" };
 
-export function PriceForm({ slug, value }: { slug: string; value: number }) {
+export function PriceForm({
+  slug,
+  retailPrice,
+  distributorPrice,
+}: {
+  slug: string;
+  retailPrice: number;
+  distributorPrice: number;
+}) {
   const action = updateProductPrice.bind(null, slug);
   const [state, formAction, pending] = useActionState(action, initialState);
   return (
-    <form action={formAction} className="flex min-w-52 items-start gap-2">
+    <form action={formAction} className="grid min-w-0 gap-2">
       <div className="min-w-0 flex-1">
-        <label className="sr-only" htmlFor={`price-${slug}`}>
-          Внутренняя цена
+        <label className="text-muted-foreground text-xs" htmlFor={`price-${slug}`}>
+          Утверждённая розница, MDL
         </label>
         <Input
           id={`price-${slug}`}
-          name="internalPrice"
+          name="retailPrice"
           type="number"
-          min="0"
+          min="0.01"
           max="1000000"
           step="0.01"
-          defaultValue={value || ""}
+          defaultValue={retailPrice || ""}
+          placeholder="0.00"
+          required
+        />
+        <label className="text-muted-foreground text-xs" htmlFor={`distributor-${slug}`}>
+          Утверждённая закупка, MDL
+        </label>
+        <Input
+          id={`distributor-${slug}`}
+          name="distributorPrice"
+          type="number"
+          min="0.01"
+          max="1000000"
+          step="0.01"
+          defaultValue={distributorPrice || ""}
           placeholder="0.00"
           required
         />

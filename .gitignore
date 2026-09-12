@@ -47,3 +47,4 @@ next-env.d.ts
 # legacy local SQLite database
 /database/dev.db
 /database/dev.db-journal
+/graphify-out/

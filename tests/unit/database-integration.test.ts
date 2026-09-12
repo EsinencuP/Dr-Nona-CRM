@@ -14,6 +14,7 @@ describe("database and status integration", () => {
   const runSuffix = `${process.pid}${Date.now()}`.slice(-7);
   const testPhone = `+373 6${runSuffix}`;
   const testPhoneNormalized = `+3736${runSuffix}`;
+  const priceTestSlug = `test-price-snapshot-${process.pid}-${Date.now()}`;
 
   afterAll(async () => {
     const client = await db.client.findUnique({
@@ -31,6 +32,7 @@ describe("database and status integration", () => {
         db.client.delete({ where: { id: client.id } }),
       ]);
     }
+    await db.productCatalog.deleteMany({ where: { slug: priceTestSlug } });
     await db.$disconnect();
   });
 
@@ -94,5 +96,42 @@ describe("database and status integration", () => {
     await expect(deleteOrderFromDb(orderId, db)).resolves.toBe(false);
     await expect(db.order.findUnique({ where: { id: orderId } })).resolves.toBeNull();
     await expect(db.client.findUnique({ where: { phoneNormalized: testPhoneNormalized } })).resolves.toBeNull();
+  }, 20_000);
+
+  test("snapshots both fixed prices and never rewrites old items after catalogue changes", async () => {
+    await db.productCatalog.create({
+      data: { slug: priceTestSlug, sku: "TEST", retailPrice: 125.5, distributorPrice: 80.25 },
+    });
+    const firstId = `test-prices-first-${process.pid}-${Date.now()}`;
+    const input = {
+      requestId: firstId,
+      firstName: "Test",
+      lastName: "Snapshot",
+      phone: testPhone,
+      phoneNormalized: testPhoneNormalized,
+      region: "Кишинёв",
+      type: "order" as const,
+      products: [{ slug: priceTestSlug, quantity: 2 }],
+    };
+    await expect(saveApplicationToDb(input, db)).resolves.toEqual({ success: true, orderId: firstId });
+    await db.productCatalog.update({
+      where: { slug: priceTestSlug },
+      data: { retailPrice: 140, distributorPrice: 90 },
+    });
+    const secondId = `test-prices-second-${process.pid}-${Date.now()}`;
+    await expect(saveApplicationToDb({ ...input, requestId: secondId }, db)).resolves.toEqual({
+      success: true,
+      orderId: secondId,
+    });
+    const first = await db.orderItem.findFirstOrThrow({ where: { orderId: firstId } });
+    const second = await db.orderItem.findFirstOrThrow({ where: { orderId: secondId } });
+    expect(first).toMatchObject({
+      retailPriceAtPurchase: 125.5,
+      distributorPriceAtPurchase: 80.25,
+      priceAtPurchase: 125.5,
+    });
+    expect(second).toMatchObject({ retailPriceAtPurchase: 140, distributorPriceAtPurchase: 90 });
+    await deleteOrderFromDb(firstId, db);
+    await deleteOrderFromDb(secondId, db);
   }, 20_000);
 });

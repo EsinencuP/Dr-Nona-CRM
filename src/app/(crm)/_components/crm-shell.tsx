@@ -6,12 +6,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { LayoutDashboard, Menu, PackageCheck, ShieldCheck, Tags, Users, X } from "lucide-react";
+import { LayoutDashboard, Menu, PackageCheck, ShieldCheck, Tags, TrendingUp, Users, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
 const navigation = [
   { href: "/dashboard", label: "Дашборд", description: "Аналитика", icon: LayoutDashboard },
+  { href: "/results", label: "Результаты", description: "Продажи и поставки", icon: TrendingUp },
   { href: "/orders", label: "Заказы и заявки", description: "Работа менеджера", icon: PackageCheck },
   { href: "/clients", label: "Клиентская база", description: "История обращений", icon: Users },
   { href: "/catalog", label: "Каталог и цены", description: "Внутренний учёт", icon: Tags },

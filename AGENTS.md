@@ -4,7 +4,7 @@ This repository is the autonomous Next.js 16 internal CRM and application backen
 
 ## Product boundaries
 
-- Keep exactly four working routes: `/dashboard`, `/orders`, `/clients`, and `/catalog`.
+- Keep five working routes: `/dashboard`, `/results`, `/orders`, `/clients`, and `/catalog` (results explicitly authorized on 2026-09-12).
 - Do not restore demo routes or template brands.
 - Internal prices must never be exposed by the public Vite application.
 - Do not invent client, order, attribution, price, or profitability data.

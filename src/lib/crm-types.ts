@@ -4,20 +4,51 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export const ORDER_TYPES = ["order", "consultation", "masterclass"] as const;
 export type OrderType = (typeof ORDER_TYPES)[number];
 
-export type DashboardRange = "7d" | "30d" | "all";
+export type DashboardRange = "7d" | "30d" | "90d" | "all";
+
+export type MetricWithDelta = { value: number; delta: number | null; deltaAbs: number | null };
 
 export type DashboardStats = {
+  range: DashboardRange;
+  asOf: string;
+  start: string | null;
+  previousStart: string | null;
   kpis: {
-    total: number;
+    total: MetricWithDelta;
+    new: number;
     processing: number;
     delivery: number;
-    done: number;
+    cancelledNow: number;
+    done: MetricWithDelta;
+    cancelled: MetricWithDelta;
+    revenue: MetricWithDelta;
+    unitsSold: MetricWithDelta;
+    profit: MetricWithDelta;
+    aov: MetricWithDelta;
+    newClients: MetricWithDelta;
+    conversionRate: MetricWithDelta;
   };
-  timeline: Array<{ label: string; orders: number }>;
-  regions: Array<{ region: string; orders: number }>;
-  sources: Array<{ source: string; orders: number }>;
-  products: Array<{ slug: string; name: string; quantity: number }>;
-  completedTurnover: number;
+  timeline: Array<{ key: string; label: string; orders: number; revenue: number }>;
+  regionOrders: Array<{ region: string; count: number }>;
+  utmSources: Array<{ source: string | null; count: number }>;
+  topProducts: Array<{ slug: string; name: string; units: number; revenue: number }>;
+  peakHours: Array<{ hour: number; count: number }>;
+  recentOrders: Array<{
+    id: string;
+    clientName: string;
+    type: string;
+    status: OrderStatus;
+    createdAt: string;
+    productNames: string[];
+  }>;
+  quality: {
+    missingRetail: number;
+    missingCost: number;
+    previousMissingRetail: number;
+    previousMissingCost: number;
+    cancelledMissingRetail: number;
+  };
+  lostRevenue: number;
 };
 
 export type OrderView = {
@@ -85,5 +116,7 @@ export type CatalogProductView = {
   sku: string;
   category: string;
   internalPrice: number;
+  retailPrice: number;
+  distributorPrice: number;
   updatedAt: string | null;
 };

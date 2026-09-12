@@ -82,6 +82,8 @@ model OrderItem {
   productSlug      String                       // e.g. "solaris-body-lotion"
   quantity         Int      @default(1)         // Number of units ordered
   priceAtPurchase  Float    @default(0.0)       // Internal price snapshot (hidden from clients)
+  retailPriceAtPurchase Float @default(0.0)     // Fixed retail snapshot; zero means unavailable
+  distributorPriceAtPurchase Float @default(0.0) // Fixed purchase-cost snapshot
 
   order            Order    @relation(fields: [orderId], references: [id])
 
@@ -97,6 +99,8 @@ model ProductCatalog {
   slug          String   @id                   // e.g. "solaris-body-lotion"
   sku           String                         // e.g. "413001"
   internalPrice Float    @default(0.0)         // Internal cost for revenue calculation
+  retailPrice Float @default(0.0)             // Approved catalogue retail price, MDL
+  distributorPrice Float @default(0.0)        // Approved distributor purchase price, MDL
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }

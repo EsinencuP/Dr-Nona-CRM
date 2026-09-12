@@ -66,6 +66,13 @@ export async function saveApplicationToDb(
 ): Promise<DbWriteResult> {
   try {
     const order = await db.$transaction(async (transaction) => {
+      const catalogPrices = input.products?.length
+        ? await transaction.productCatalog.findMany({
+            where: { slug: { in: input.products.map((product) => product.slug) } },
+            select: { slug: true, retailPrice: true, distributorPrice: true },
+          })
+        : [];
+      const priceMap = new Map(catalogPrices.map((product) => [product.slug, product]));
       const client = await transaction.client.upsert({
         where: { phoneNormalized: input.phoneNormalized },
         update: {
@@ -108,7 +115,9 @@ export async function saveApplicationToDb(
                   create: input.products.map((product) => ({
                     productSlug: product.slug,
                     quantity: product.quantity,
-                    priceAtPurchase: 0,
+                    priceAtPurchase: priceMap.get(product.slug)?.retailPrice ?? 0,
+                    retailPriceAtPurchase: priceMap.get(product.slug)?.retailPrice ?? 0,
+                    distributorPriceAtPurchase: priceMap.get(product.slug)?.distributorPrice ?? 0,
                   })),
                 },
               }
