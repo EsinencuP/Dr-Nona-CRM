@@ -75,6 +75,8 @@ npm run build
 
 Репозиторий деплоится с корня. В Vercel `DATABASE_URL` должен содержать pooled PostgreSQL URL приложения, а `DATABASE_URL_UNPOOLED` — direct URL для Prisma migrations.
 
+`vercel.json` запускает `npm run db:migrate:deploy` перед `npm run build`: версия не публикуется при ошибке миграции. Оба URL должны относиться к одной базе соответствующего environment; для preview используйте отдельную базу. Проверяйте обратную совместимость каждой миграции: она применяется до переключения трафика. Локальный `npm run build` сам по себе базу не меняет.
+
 В e-catalog задайте `CRM_APPLICATIONS_API_URL=https://<crm-domain>/api/applications` и `VITE_CRM_URL=https://<crm-domain>/dashboard`. В CRM задайте production-origin e-catalog в `CONTACT_ALLOWED_ORIGINS`.
 
 ## Источник интерфейсного шаблона
