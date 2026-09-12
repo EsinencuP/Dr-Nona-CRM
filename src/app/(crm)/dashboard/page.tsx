@@ -14,6 +14,7 @@ import { RegionsChart } from "./_components/regions-chart";
 import { SourcesDonutChart } from "./_components/sources-donut-chart";
 import { StatusPill } from "./_components/status-pill";
 import { TopProductsTable } from "./_components/top-products-table";
+import styles from "./dashboard.module.css";
 export const metadata: Metadata = { title: "Дашборд — операционная сводка", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
 export default async function DashboardPage({
@@ -31,7 +32,7 @@ export default async function DashboardPage({
       stats.quality.previousMissingCost >
     0;
   return (
-    <div className="-m-4 space-y-5 bg-slate-50 px-4 py-5 md:-m-6 md:px-6 xl:-m-7 xl:px-7">
+    <div className={`${styles.dashboard} -m-4 space-y-5 bg-slate-50 px-4 py-5 md:-m-6 md:px-6 xl:-m-7 xl:px-7`}>
       <DashboardHeader range={range} asOf={stats.asOf} />
       <div id="dashboard-panel" role="tabpanel" aria-labelledby={`range-${range}`} className="space-y-5">
         {incomplete && (
@@ -80,7 +81,7 @@ export default async function DashboardPage({
           <h2 className="mb-2 font-medium text-slate-500 text-xs">
             Операционные статусы · все заявки на момент загрузки
           </h2>
-          <div className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatusPill title="Новые" count={stats.kpis.new} status="NEW" icon={Inbox} tone="text-slate-500" />
             <StatusPill
               title="В обработке"

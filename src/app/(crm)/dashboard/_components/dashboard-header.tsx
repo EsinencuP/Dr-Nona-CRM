@@ -19,7 +19,7 @@ export function DashboardHeader({ range, asOf }: { range: DashboardRange; asOf: 
   return (
     <header className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
       <div>
-        <p className="font-semibold text-blue-500 text-xs uppercase tracking-widest">Операционная сводка</p>
+        <p className="font-semibold text-slate-500 text-xs uppercase tracking-widest">Операционная сводка</p>
         <h1 className="mt-1 font-extrabold text-3xl text-slate-800 tracking-tight">Дашборд</h1>
         <p className="mt-2 text-slate-500 text-sm">
           Продажи, заявки и работа команды ·{" "}
@@ -64,7 +64,7 @@ export function DashboardHeader({ range, asOf }: { range: DashboardRange; asOf: 
                 refs.current[next]?.focus();
                 select(dashboardRanges[next].value);
               }}
-              className={`min-h-11 rounded-lg px-3 font-semibold text-xs transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${range === option.value ? "bg-blue-500 text-white hover:bg-blue-500" : "text-slate-500"}`}
+              className={`min-h-11 rounded-lg px-3 font-semibold text-xs transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${range === option.value ? "bg-blue-50 text-slate-800 ring-1 ring-blue-500" : "text-slate-500"}`}
             >
               {option.label}
             </button>

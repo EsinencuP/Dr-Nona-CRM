@@ -172,7 +172,9 @@ export function aggregateDashboard({
       cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
   } else if (current.length) {
-    const first = new Date(Math.min(...current.map((order) => order.createdAt.getTime())));
+    const first = new Date(
+      current.reduce((earliest, order) => Math.min(earliest, order.createdAt.getTime()), now.getTime()),
+    );
     const cursor = new Date(`${dayKey(first).slice(0, 7)}-01T12:00:00Z`);
     const last = dayKey(now).slice(0, 7);
     while (cursor.toISOString().slice(0, 7) <= last) {

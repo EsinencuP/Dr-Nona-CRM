@@ -16,7 +16,7 @@ export function OrdersRevenueChart({ data }: { data: DashboardStats["timeline"] 
         {data.map((row) => `${row.label}: ${row.orders} заявок, ${dashboardMoney(row.revenue)}`).join("; ")}
       </p>
       {data.some((row) => row.orders > 0) ? (
-        <div className="h-[220px] min-w-0" aria-label="Динамика заявок и выручки">
+        <div className="h-[220px] min-w-0">
           <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 300, height: 220 }}>
             <ComposedChart data={data} margin={{ top: 10, right: 0, left: -18, bottom: 0 }} accessibilityLayer>
               <CartesianGrid stroke="#E2E8F0" strokeDasharray="3 3" vertical={false} />

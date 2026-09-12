@@ -63,6 +63,12 @@ export async function getDashboardStats(requestedRange: DashboardRange): Promise
   const now = new Date();
   const start = startDateForRange(range, now);
   const previousStart = start ? new Date(2 * start.getTime() - now.getTime()) : undefined;
+  const statusQuery = prisma.order.groupBy({
+    by: ["status"],
+    orderBy: { status: "asc" },
+    where: { createdAt: { lt: now } },
+    _count: { _all: true },
+  });
   const [orders, statuses, newClients, previousNewClients, recent] = await prisma.$transaction(
     [
       prisma.order.findMany({
@@ -83,7 +89,7 @@ export async function getDashboardStats(requestedRange: DashboardRange): Promise
           },
         },
       }),
-      prisma.order.groupBy({ by: ["status"], where: { createdAt: { lt: now } }, _count: { _all: true } }),
+      statusQuery,
       prisma.client.count({ where: { createdAt: { gte: start, lt: now } } }),
       prisma.client.count({ where: { createdAt: { gte: previousStart, lt: start ?? new Date(0) } } }),
       prisma.order.findMany({

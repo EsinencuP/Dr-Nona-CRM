@@ -16,7 +16,7 @@ export function RecentOrdersFeed({ orders, asOf }: { orders: DashboardStats["rec
       action={
         <Link
           href="/orders"
-          className="inline-flex min-h-11 items-center rounded px-1 font-semibold text-blue-500 text-xs focus-visible:ring-2 focus-visible:ring-blue-500"
+          className="inline-flex min-h-11 items-center rounded px-1 font-semibold text-slate-800 text-xs underline underline-offset-4 focus-visible:ring-2 focus-visible:ring-blue-500"
         >
           Все заявки →
         </Link>

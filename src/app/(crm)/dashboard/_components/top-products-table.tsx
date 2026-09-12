@@ -8,7 +8,7 @@ export function TopProductsTable({ products, period }: { products: DashboardStat
   return (
     <ChartCard
       title="Топ товаров"
-      action={<span className="rounded-full bg-slate-100 px-2 py-1 text-slate-500 text-xs">{period}</span>}
+      action={<span className="rounded-full bg-slate-50 px-2 py-1 text-slate-500 text-xs">{period}</span>}
     >
       {products.length ? (
         <table className="w-full table-fixed text-left text-xs">
@@ -48,7 +48,7 @@ export function TopProductsTable({ products, period }: { products: DashboardStat
       )}
       <Link
         href="/catalog"
-        className="mt-3 inline-flex min-h-11 items-center gap-1 rounded px-1 font-semibold text-blue-500 text-xs focus-visible:ring-2 focus-visible:ring-blue-500"
+        className="mt-3 inline-flex min-h-11 items-center gap-1 rounded px-1 font-semibold text-slate-800 text-xs underline underline-offset-4 focus-visible:ring-2 focus-visible:ring-blue-500"
       >
         Все товары →
       </Link>

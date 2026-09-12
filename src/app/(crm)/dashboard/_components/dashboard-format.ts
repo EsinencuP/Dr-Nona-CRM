@@ -17,7 +17,7 @@ export function formatRelativeTime(date: string, asOf: string) {
 export function deltaBadgeClass(delta: number | null) {
   if (delta !== null && delta > 0) return "bg-emerald-50 text-emerald-700";
   if (delta !== null && delta < 0) return "bg-rose-50 text-rose-700";
-  return "bg-slate-100 text-slate-500";
+  return "bg-slate-50 text-slate-500";
 }
 export function deltaArrow(delta: number | null) {
   if (delta !== null && delta > 0) return "▲";
