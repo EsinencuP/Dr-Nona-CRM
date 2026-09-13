@@ -72,7 +72,7 @@ export type ProviderResult =
       durationMs: number;
     };
 
-export type DeliveryStatus = "sent" | "failed";
+export type DeliveryStatus = "sent" | "failed" | "pending";
 
 export type ApplicationServiceResult = {
   requestId: string;
@@ -80,5 +80,6 @@ export type ApplicationServiceResult = {
   delivery: {
     telegram: DeliveryStatus;
   };
-  outcome: "success" | "failure";
+  outcome: "success" | "failure" | "in_progress" | "conflict";
+  replayed?: boolean;
 };

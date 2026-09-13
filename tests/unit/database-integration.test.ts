@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, test } from "vitest";
 
 import {
+  completeApplicationDelivery,
   deleteOrderFromDb,
   getDbClient,
+  markApplicationDeliveryFailed,
   type OrderStatus,
   saveApplicationToDb,
   saveMessageIdToDb,
@@ -15,6 +17,7 @@ describe("database and status integration", () => {
   const testPhone = `+373 6${runSuffix}`;
   const testPhoneNormalized = `+3736${runSuffix}`;
   const priceTestSlug = `test-price-snapshot-${process.pid}-${Date.now()}`;
+  const idempotencyOrderIds: string[] = [];
 
   afterAll(async () => {
     const client = await db.client.findUnique({
@@ -33,6 +36,9 @@ describe("database and status integration", () => {
       ]);
     }
     await db.productCatalog.deleteMany({ where: { slug: priceTestSlug } });
+    for (const orderId of idempotencyOrderIds) {
+      await deleteOrderFromDb(orderId, db);
+    }
     await db.$disconnect();
   });
 
@@ -133,5 +139,85 @@ describe("database and status integration", () => {
     expect(second).toMatchObject({ retailPriceAtPurchase: 140, distributorPriceAtPurchase: 90 });
     await deleteOrderFromDb(firstId, db);
     await deleteOrderFromDb(secondId, db);
+  }, 20_000);
+
+  test("persists idempotency across concurrent requests, replays success and retries only definite failure", async () => {
+    const suffix = `${process.pid}-${Date.now()}`;
+    const firstId = `test-idempotency-a-${suffix}`;
+    const secondId = `test-idempotency-b-${suffix}`;
+    const context = {
+      keyHash: `test-key-hash-${suffix}`,
+      payloadHash: `test-payload-hash-${suffix}`,
+      now: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    const base = {
+      firstName: "Test",
+      lastName: "Idempotency",
+      phone: testPhone,
+      phoneNormalized: testPhoneNormalized,
+      region: "Кишинёв",
+      type: "order" as const,
+      products: [{ slug: "solaris-body-lotion", quantity: 1 }],
+    };
+
+    const concurrent = await Promise.all([
+      saveApplicationToDb({ ...base, requestId: firstId }, db, context),
+      saveApplicationToDb({ ...base, requestId: secondId }, db, context),
+    ]);
+    const created = concurrent.find((result) => result.success && result.disposition === "created");
+    const waiting = concurrent.find((result) => result.success && result.disposition === "in_progress");
+    expect(created?.success).toBe(true);
+    expect(waiting?.success).toBe(true);
+    if (!created?.success) throw new Error("Expected one created idempotent request");
+    idempotencyOrderIds.push(created.orderId);
+    expect(await db.order.count({ where: { id: { in: [firstId, secondId] } } })).toBe(1);
+
+    await expect(completeApplicationDelivery(created.orderId, `tg-${suffix}`, db)).resolves.toBe(true);
+    await expect(
+      saveApplicationToDb({ ...base, requestId: `test-idempotency-replay-${suffix}` }, db, context),
+    ).resolves.toEqual({
+      success: true,
+      orderId: created.orderId,
+      disposition: "replay",
+    });
+    await expect(
+      saveApplicationToDb({ ...base, requestId: `test-idempotency-conflict-${suffix}` }, db, {
+        ...context,
+        payloadHash: `${context.payloadHash}-different`,
+      }),
+    ).resolves.toMatchObject({ success: false, disposition: "conflict" });
+
+    const retryId = `test-idempotency-retry-${suffix}`;
+    const retryContext = { ...context, keyHash: `${context.keyHash}-retry` };
+    const initialRetry = await saveApplicationToDb({ ...base, requestId: retryId }, db, retryContext);
+    expect(initialRetry).toMatchObject({ success: true, orderId: retryId, disposition: "created" });
+    idempotencyOrderIds.push(retryId);
+    await expect(markApplicationDeliveryFailed(retryId, "NETWORK_ERROR", db)).resolves.toBe(true);
+    await expect(
+      saveApplicationToDb({ ...base, requestId: `test-idempotency-unused-${suffix}` }, db, retryContext),
+    ).resolves.toEqual({ success: true, orderId: retryId, disposition: "retry" });
+
+    const expiredFirstId = `test-idempotency-expired-a-${suffix}`;
+    const expiredSecondId = `test-idempotency-expired-b-${suffix}`;
+    const expiredContext = {
+      ...context,
+      keyHash: `${context.keyHash}-expired`,
+      now: new Date("2030-01-01T00:00:00.000Z"),
+      expiresAt: new Date("2030-01-01T00:00:01.000Z"),
+    };
+    await expect(
+      saveApplicationToDb({ ...base, requestId: expiredFirstId }, db, expiredContext),
+    ).resolves.toMatchObject({
+      success: true,
+      disposition: "created",
+    });
+    const reused = await saveApplicationToDb({ ...base, requestId: expiredSecondId }, db, {
+      ...expiredContext,
+      now: new Date("2030-01-01T00:00:02.000Z"),
+      expiresAt: new Date("2030-01-02T00:00:02.000Z"),
+    });
+    expect(reused).toMatchObject({ success: true, orderId: expiredSecondId, disposition: "created" });
+    idempotencyOrderIds.push(expiredFirstId, expiredSecondId);
   }, 20_000);
 });

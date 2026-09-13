@@ -48,8 +48,10 @@ function dependencies(telegram: () => Promise<ProviderResult>) {
     saveApplication: vi.fn<NonNullable<ApplicationServiceDependencies["saveApplication"]>>(async () => ({
       success: true as const,
       orderId: "request-fixed",
+      disposition: "created" as const,
     })),
-    saveMessageId: vi.fn(async () => undefined),
+    completeDelivery: vi.fn(async () => true),
+    markDeliveryFailed: vi.fn(async () => true),
   };
 }
 
@@ -65,13 +67,17 @@ describe("application service", () => {
 
   test("does not send Telegram or report success when persistence fails", async () => {
     const deps = dependencies(() => Promise.resolve(sent()));
-    deps.saveApplication = vi.fn(async () => ({ success: false as const, error: "database unavailable" }));
+    deps.saveApplication = vi.fn(async () => ({
+      success: false as const,
+      disposition: "failure" as const,
+      error: "database unavailable",
+    }));
 
     const result = await processApplication(input, deps);
 
     expect(result).toMatchObject({ outcome: "failure", delivery: { telegram: "failed" } });
     expect(deps.sendTelegram).not.toHaveBeenCalled();
-    expect(deps.saveMessageId).not.toHaveBeenCalled();
+    expect(deps.completeDelivery).not.toHaveBeenCalled();
   });
 
   test("uses the server request ID in the Telegram message", async () => {
@@ -141,6 +147,59 @@ describe("application service", () => {
         eventTime: "14:30",
         products: undefined,
       }),
+      undefined,
+      undefined,
     );
+  });
+
+  test("replays a completed key without creating or sending again", async () => {
+    const deps = dependencies(() => Promise.resolve(sent()));
+    deps.saveApplication = vi.fn(async () => ({
+      success: true as const,
+      orderId: "original-request",
+      disposition: "replay" as const,
+    }));
+
+    const result = await processApplication(input, deps, { idempotencyKey: "same-key" });
+
+    expect(result).toMatchObject({ outcome: "success", requestId: "original-request", replayed: true });
+    expect(deps.sendTelegram).not.toHaveBeenCalled();
+    expect(deps.completeDelivery).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["in_progress", "in_progress"],
+    ["conflict", "conflict"],
+  ] as const)("returns %s without Telegram for a persistent %s decision", async (disposition, outcome) => {
+    const deps = dependencies(() => Promise.resolve(sent()));
+    deps.saveApplication = vi.fn(async () =>
+      disposition === "conflict"
+        ? { success: false as const, disposition, error: "IDEMPOTENCY_CONFLICT" }
+        : { success: true as const, orderId: "original-request", disposition },
+    );
+
+    const result = await processApplication(input, deps, { idempotencyKey: "same-key" });
+
+    expect(result.outcome).toBe(outcome);
+    expect(deps.sendTelegram).not.toHaveBeenCalled();
+  });
+
+  test("retries a definite delivery failure with the original request ID", async () => {
+    const deps = dependencies(() => Promise.resolve(sent()));
+    deps.saveApplication = vi.fn(async () => ({
+      success: true as const,
+      orderId: "original-request",
+      disposition: "retry" as const,
+    }));
+
+    const result = await processApplication(input, deps, { idempotencyKey: "same-key" });
+
+    expect(result).toMatchObject({ outcome: "success", requestId: "original-request" });
+    expect(deps.sendTelegram).toHaveBeenCalledOnce();
+    expect(deps.sendTelegram).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "original-request" }),
+      expect.stringContaining("original-request"),
+    );
+    expect(deps.completeDelivery).toHaveBeenCalledWith("original-request", "telegram-id");
   });
 });

@@ -1,6 +1,12 @@
 import type { ApplicationInput } from "../../shared/applications/application-schema";
 import { normalizePhone } from "../../shared/applications/application-schema";
-import { type DbWriteInput, saveApplicationToDb, saveMessageIdToDb } from "./application-db";
+import {
+  completeApplicationDelivery,
+  type DbWriteInput,
+  markApplicationDeliveryFailed,
+  saveApplicationToDb,
+} from "./application-db";
+import { createApplicationIdempotency } from "./application-idempotency";
 import type {
   ApplicationExtraFields,
   ApplicationProduct,
@@ -19,12 +25,14 @@ export type ApplicationServiceDependencies = {
   logger?: (metadata: Record<string, unknown>) => void;
   extraFields?: ApplicationExtraFields;
   saveApplication?: typeof saveApplicationToDb;
-  saveMessageId?: typeof saveMessageIdToDb;
+  completeDelivery?: typeof completeApplicationDelivery;
+  markDeliveryFailed?: typeof markApplicationDeliveryFailed;
 };
 
 export async function processApplication(
   input: ApplicationInput,
   dependencies: ApplicationServiceDependencies,
+  context?: { idempotencyKey: string },
 ): Promise<ApplicationServiceResult> {
   const startedAt = Date.now();
   const requestId = (dependencies.createRequestId ?? randomUUID)();
@@ -114,10 +122,16 @@ export async function processApplication(
           }))
         : undefined,
   };
-  const dbResult = await (dependencies.saveApplication ?? saveApplicationToDb)(dbInput).catch((error: unknown) => ({
-    success: false as const,
-    error: String(error),
-  }));
+  const idempotency = context
+    ? createApplicationIdempotency(input, context.idempotencyKey, new Date(submittedAt))
+    : undefined;
+  const dbResult = await (dependencies.saveApplication ?? saveApplicationToDb)(dbInput, undefined, idempotency).catch(
+    (error: unknown) => ({
+      success: false as const,
+      disposition: "failure" as const,
+      error: String(error),
+    }),
+  );
   dependencies.logger?.({
     event: "application.db.write",
     requestId,
@@ -132,6 +146,14 @@ export async function processApplication(
       telegramStatus: "skipped",
       durationMs: Date.now() - startedAt,
     });
+    if (dbResult.disposition === "conflict") {
+      return {
+        requestId,
+        type: record.type,
+        delivery: { telegram: "pending" },
+        outcome: "conflict",
+      };
+    }
     return {
       requestId,
       type: record.type,
@@ -139,10 +161,40 @@ export async function processApplication(
       outcome: "failure",
     };
   }
+  if (dbResult.disposition === "replay") {
+    return {
+      requestId: dbResult.orderId,
+      type: record.type,
+      delivery: { telegram: "sent" },
+      outcome: "success",
+      replayed: true,
+    };
+  }
+  if (dbResult.disposition === "in_progress") {
+    return {
+      requestId: dbResult.orderId,
+      type: record.type,
+      delivery: { telegram: "pending" },
+      outcome: "in_progress",
+    };
+  }
+  const activeRequestId = dbResult.orderId;
+  record = { ...record, requestId: activeRequestId };
   const message = formatTelegramApplication(record);
   const telegramResult = await dependencies.sendTelegram(record, message).catch(() => undefined);
-  if (dbResult.success && telegramResult?.status === "sent" && telegramResult.providerMessageId) {
-    await (dependencies.saveMessageId ?? saveMessageIdToDb)(requestId, telegramResult.providerMessageId);
+  if (telegramResult?.status === "sent" && telegramResult.providerMessageId) {
+    const completionSaved = await (dependencies.completeDelivery ?? completeApplicationDelivery)(
+      activeRequestId,
+      telegramResult.providerMessageId,
+    );
+    if (!completionSaved) {
+      return {
+        requestId: activeRequestId,
+        type: record.type,
+        delivery: { telegram: "sent" },
+        outcome: "in_progress",
+      };
+    }
   }
   const delivery = {
     telegram:
@@ -151,12 +203,18 @@ export async function processApplication(
         : ("failed" as const),
   };
   const outcome = delivery.telegram === "sent" ? "success" : "failure";
+  if (outcome === "failure") {
+    await (dependencies.markDeliveryFailed ?? markApplicationDeliveryFailed)(
+      activeRequestId,
+      telegramResult?.status === "failed" ? telegramResult.errorCode : "PROVIDER_UNAVAILABLE",
+    );
+  }
   dependencies.logger?.({
     event: "application.delivery.completed",
-    requestId,
+    requestId: activeRequestId,
     type: record.type,
     telegramStatus: delivery.telegram,
     durationMs: Date.now() - startedAt,
   });
-  return { requestId, type: record.type, delivery, outcome };
+  return { requestId: activeRequestId, type: record.type, delivery, outcome };
 }

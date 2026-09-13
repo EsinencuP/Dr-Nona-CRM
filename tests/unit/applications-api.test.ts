@@ -65,7 +65,9 @@ describe("POST /api/applications", () => {
       )(request({ ...validBody, locale }));
 
       expect(response.status).toBe(201);
-      expect(process).toHaveBeenCalledWith(expect.objectContaining({ locale }), expect.any(Object));
+      expect(process).toHaveBeenCalledWith(expect.objectContaining({ locale }), expect.any(Object), {
+        idempotencyKey: "attempt-1",
+      });
     },
   );
 
@@ -147,6 +149,7 @@ describe("POST /api/applications", () => {
         eventTime: "14:30",
       }),
       expect.any(Object),
+      { idempotencyKey: "attempt-1" },
     );
   });
 
@@ -256,5 +259,21 @@ describe("POST /api/applications", () => {
     )(request());
     expect(response.status).toBe(201);
     expect(JSON.stringify(logger.mock.calls)).not.toMatch(/Ana|Popescu|069|Кишинёв/u);
+  });
+
+  test.each([
+    ["conflict", "IDEMPOTENCY_CONFLICT"],
+    ["in_progress", "REQUEST_IN_PROGRESS"],
+  ] as const)("returns a stable 409 for %s idempotency state", async (outcome, code) => {
+    const response = await handler({
+      requestId: "request-existing",
+      type: "order",
+      delivery: { telegram: "pending" },
+      outcome,
+    })(request());
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ ok: false, code });
+    if (outcome === "in_progress") expect(response.headers.get("Retry-After")).toBe("30");
   });
 });

@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { ApplicationSubmissionState, Prisma, PrismaClient } from "@prisma/client";
 
 let prisma: PrismaClient | undefined;
 
@@ -36,7 +36,16 @@ export type DbWriteInput = {
   }>;
 };
 
-export type DbWriteResult = { success: true; orderId: string } | { success: false; error: string };
+export type IdempotencyWriteContext = {
+  keyHash: string;
+  payloadHash: string;
+  expiresAt: Date;
+  now: Date;
+};
+
+export type DbWriteResult =
+  | { success: true; orderId: string; disposition: "created" | "retry" | "replay" | "in_progress" }
+  | { success: false; disposition: "conflict" | "failure"; error: string };
 
 export type OrderStatus = "NEW" | "PROCESSING" | "DELIVERY" | "DONE" | "CANCELLED";
 
@@ -63,6 +72,8 @@ export async function deleteOrderFromDb(orderId: string, db: PrismaClient = getD
 export async function saveApplicationToDb(
   input: DbWriteInput,
   db: PrismaClient = getDbClient(),
+  idempotency?: IdempotencyWriteContext,
+  allowExpiredRetry = true,
 ): Promise<DbWriteResult> {
   try {
     const order = await db.$transaction(async (transaction) => {
@@ -91,7 +102,7 @@ export async function saveApplicationToDb(
         },
       });
 
-      return transaction.order.create({
+      const createdOrder = await transaction.order.create({
         data: {
           id: input.requestId,
           clientId: client.id,
@@ -124,12 +135,105 @@ export async function saveApplicationToDb(
             : {}),
         },
       });
+      if (idempotency) {
+        await transaction.applicationSubmission.create({
+          data: {
+            keyHash: idempotency.keyHash,
+            payloadHash: idempotency.payloadHash,
+            requestId: createdOrder.id,
+            expiresAt: idempotency.expiresAt,
+          },
+        });
+      }
+      return createdOrder;
     });
 
-    return { success: true, orderId: order.id };
+    return { success: true, orderId: order.id, disposition: "created" };
   } catch (error) {
+    if (idempotency && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const existing = await db.applicationSubmission.findUnique({ where: { keyHash: idempotency.keyHash } });
+      if (existing) {
+        if (existing.expiresAt <= idempotency.now && allowExpiredRetry) {
+          await db.applicationSubmission.deleteMany({
+            where: { keyHash: idempotency.keyHash, expiresAt: { lte: idempotency.now } },
+          });
+          return saveApplicationToDb(input, db, idempotency, false);
+        }
+        if (existing.payloadHash !== idempotency.payloadHash) {
+          return { success: false, disposition: "conflict", error: "IDEMPOTENCY_CONFLICT" };
+        }
+        if (existing.state === ApplicationSubmissionState.DELIVERED) {
+          return { success: true, orderId: existing.requestId, disposition: "replay" };
+        }
+        if (existing.state === ApplicationSubmissionState.DELIVERY_STARTED) {
+          return { success: true, orderId: existing.requestId, disposition: "in_progress" };
+        }
+        const acquired = await db.applicationSubmission.updateMany({
+          where: {
+            keyHash: idempotency.keyHash,
+            payloadHash: idempotency.payloadHash,
+            state: ApplicationSubmissionState.DELIVERY_FAILED,
+          },
+          data: {
+            state: ApplicationSubmissionState.DELIVERY_STARTED,
+            lastErrorCode: null,
+            expiresAt: idempotency.expiresAt,
+          },
+        });
+        return acquired.count === 1
+          ? { success: true, orderId: existing.requestId, disposition: "retry" }
+          : { success: true, orderId: existing.requestId, disposition: "in_progress" };
+      }
+    }
     const message = error instanceof Error ? error.message : String(error);
-    return { success: false, error: message };
+    return { success: false, disposition: "failure", error: message };
+  }
+}
+
+export async function completeApplicationDelivery(
+  orderId: string,
+  telegramMessageId: string,
+  db: PrismaClient = getDbClient(),
+): Promise<boolean> {
+  try {
+    await db.$transaction([
+      db.order.update({ where: { id: orderId }, data: { telegramMessageId } }),
+      db.applicationSubmission.updateMany({
+        where: { requestId: orderId, state: ApplicationSubmissionState.DELIVERY_STARTED },
+        data: {
+          state: ApplicationSubmissionState.DELIVERED,
+          providerMessageId: telegramMessageId,
+          lastErrorCode: null,
+        },
+      }),
+    ]);
+    return true;
+  } catch (error) {
+    console.error("[applications.db] Delivery completion update failed", {
+      orderId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+export async function markApplicationDeliveryFailed(
+  orderId: string,
+  errorCode: string,
+  db: PrismaClient = getDbClient(),
+): Promise<boolean> {
+  try {
+    const result = await db.applicationSubmission.updateMany({
+      where: { requestId: orderId, state: ApplicationSubmissionState.DELIVERY_STARTED },
+      data: { state: ApplicationSubmissionState.DELIVERY_FAILED, lastErrorCode: errorCode.slice(0, 100) },
+    });
+    return result.count === 1;
+  } catch (error) {
+    console.error("[applications.db] Delivery failure state update failed", {
+      orderId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
   }
 }
 

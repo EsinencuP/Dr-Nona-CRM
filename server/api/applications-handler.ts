@@ -85,22 +85,35 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
         400,
       );
     }
-    const serviceResult = await (dependencies.process ?? processApplication)(validation.data, {
-      productsBySlug,
-      sendTelegram: (_record, message) =>
-        sendTelegramApplication(message, {
-          botToken: environment.telegramBotToken,
-          chatId: environment.telegramChatId,
-        }),
-      logger: dependencies.logger ?? ((metadata) => console.info(metadata)),
-    });
+    const serviceResult = await (dependencies.process ?? processApplication)(
+      validation.data,
+      {
+        productsBySlug,
+        sendTelegram: (_record, message) =>
+          sendTelegramApplication(message, {
+            botToken: environment.telegramBotToken,
+            chatId: environment.telegramChatId,
+          }),
+        logger: dependencies.logger ?? ((metadata) => console.info(metadata)),
+      },
+      { idempotencyKey },
+    );
     const responseBody = {
       ok: serviceResult.outcome !== "failure",
       requestId: serviceResult.requestId,
       ...(serviceResult.outcome === "failure" ? { code: "DELIVERY_FAILED" } : {}),
       delivery: serviceResult.delivery,
     };
-    if (serviceResult.outcome === "success") return jsonResponse(responseBody, 201);
+    if (serviceResult.outcome === "success")
+      return jsonResponse({ ...responseBody, replayed: serviceResult.replayed ?? false }, 201);
+    if (serviceResult.outcome === "conflict") {
+      return jsonResponse({ ok: false, code: "IDEMPOTENCY_CONFLICT" }, 409);
+    }
+    if (serviceResult.outcome === "in_progress") {
+      return jsonResponse({ ok: false, code: "REQUEST_IN_PROGRESS", requestId: serviceResult.requestId }, 409, {
+        "Retry-After": "30",
+      });
+    }
     return jsonResponse({ ok: false, code: "DELIVERY_FAILED", requestId: serviceResult.requestId }, 502);
   };
 }

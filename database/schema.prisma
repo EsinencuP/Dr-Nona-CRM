@@ -64,11 +64,36 @@ model Order {
 
   client              Client   @relation(fields: [clientId], references: [id])
   items               OrderItem[]
+  applicationSubmission ApplicationSubmission?
 
   @@index([clientId])                          // Fast lookup of all orders by one client
   @@index([createdAt])                         // For time-range queries (seasonality reports)
   @@index([status, createdAt])                 // For CRM list: filter by status + sort by date
   @@index([utmSource])                         // For marketing channel performance reports
+}
+
+enum ApplicationSubmissionState {
+  DELIVERY_STARTED
+  DELIVERED
+  DELIVERY_FAILED
+}
+
+// Persistent idempotency record. Raw idempotency keys and request payloads are never stored.
+model ApplicationSubmission {
+  keyHash           String                     @id
+  payloadHash       String
+  requestId         String                     @unique
+  state             ApplicationSubmissionState @default(DELIVERY_STARTED)
+  providerMessageId String?
+  lastErrorCode     String?
+  expiresAt         DateTime
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  order             Order                      @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([state, updatedAt])
+  @@index([expiresAt])
 }
 
 // ─── TABLE 3: OrderItem ────────────────────────────────────────────────────
