@@ -1,8 +1,23 @@
-export const ORDER_STATUSES = ["NEW", "PROCESSING", "DELIVERY", "DONE", "CANCELLED"] as const;
-export type OrderStatus = (typeof ORDER_STATUSES)[number];
+import type {
+  OrderStatus as PrismaOrderStatus,
+  OrderType as PrismaOrderType,
+} from "@prisma/client";
 
-export const ORDER_TYPES = ["order", "consultation", "masterclass"] as const;
-export type OrderType = (typeof ORDER_TYPES)[number];
+export const ORDER_STATUSES = [
+  "NEW",
+  "PROCESSING",
+  "DELIVERY",
+  "DONE",
+  "CANCELLED",
+] as const satisfies readonly PrismaOrderStatus[];
+export type OrderStatus = PrismaOrderStatus;
+
+export const ORDER_TYPES = [
+  "order",
+  "consultation",
+  "masterclass",
+] as const satisfies readonly PrismaOrderType[];
+export type OrderType = PrismaOrderType;
 
 export type DashboardRange = "7d" | "30d" | "90d" | "all";
 
@@ -67,6 +82,13 @@ export type OrderView = {
   utmCampaign: string | null;
   entryPoint: string | null;
   sessionHistory: string[];
+  submitted: {
+    firstName: string;
+    lastName: string;
+    phone: string;
+    email: string | null;
+    region: string;
+  };
   client: {
     id: string;
     firstName: string;
@@ -107,6 +129,11 @@ export type ClientView = {
     type: OrderType;
     status: OrderStatus;
     value: number;
+  }>;
+  profileAudits: Array<{
+    id: string;
+    actor: string;
+    createdAt: string;
   }>;
 };
 

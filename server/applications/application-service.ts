@@ -51,6 +51,13 @@ export async function processApplication(
   };
   const quantitiesBySlug =
     input.type === "order" ? new Map(input.items?.map((item) => [item.slug, item.quantity])) : undefined;
+  if (input.type === "order" && input.items === undefined) {
+    dependencies.logger?.({
+      event: "application.contract.legacy_order_items",
+      requestId,
+      fallbackQuantity: 1,
+    });
+  }
   let record: ApplicationRecord;
   if (input.type === "order") {
     record = {

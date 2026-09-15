@@ -6,6 +6,10 @@ import type { ContactEnvironment } from "../../server/config/contact-env";
 import { createApplicationRateLimitGuard } from "../../server/http/application-rate-limit";
 import { MASTERCLASS_TOPICS } from "../../shared/constants/masterclass-topics";
 
+const validMasterclassDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Chisinau",
+}).format(new Date(Date.now() + 60 * 24 * 60 * 60 * 1000));
+
 const environment: ContactEnvironment = {
   allowedOrigins: new Set(["https://example.test"]),
   telegramBotToken: "test-token",
@@ -137,7 +141,7 @@ describe("POST /api/applications", () => {
         productSlugs: undefined,
         items: undefined,
         masterclassTopic: MASTERCLASS_TOPICS[1],
-        eventDate: "2099-01-01",
+        eventDate: validMasterclassDate,
         eventTime: "14:30",
       }),
     );
@@ -147,7 +151,7 @@ describe("POST /api/applications", () => {
       expect.objectContaining({
         type: "masterclass",
         masterclassTopic: MASTERCLASS_TOPICS[1],
-        eventDate: "2099-01-01",
+        eventDate: validMasterclassDate,
         eventTime: "14:30",
       }),
       expect.any(Object),

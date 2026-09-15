@@ -1,22 +1,49 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+
+import { useRouter } from "next/navigation";
 
 import { Mail, MapPin, Phone, UserRound, Warehouse } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDate, formatLei, typeLabels } from "@/lib/crm-labels";
 import type { ClientView } from "@/lib/crm-types";
+import { MOLDOVA_REGIONS } from "../../../../../shared/constants/moldova-regions";
 
 import { StatusBadge } from "../../_components/status-badge";
+import { updateClientProfile } from "../../actions";
 
 function whatsappHref(phone: string) {
   return `https://wa.me/${phone.replace(/\D/g, "")}`;
 }
 
 export function ClientsTable({ clients }: { clients: ClientView[] }) {
+  const router = useRouter();
   const [selected, setSelected] = useState<ClientView | null>(null);
+  const [message, setMessage] = useState("");
+  const [pending, startTransition] = useTransition();
+
+  function submitProfile(formData: FormData) {
+    if (!selected) return;
+    setMessage("");
+    startTransition(() => {
+      void updateClientProfile(selected.id, {
+        firstName: String(formData.get("firstName") ?? ""),
+        lastName: String(formData.get("lastName") ?? ""),
+        phone: String(formData.get("phone") ?? ""),
+        email: String(formData.get("email") ?? ""),
+        region: String(formData.get("region") ?? "") as (typeof MOLDOVA_REGIONS)[number],
+      }).then((result) => {
+        setMessage(result.message);
+        if (result.ok) router.refresh();
+      });
+    });
+  }
 
   if (clients.length === 0) {
     return (
@@ -150,6 +177,42 @@ export function ClientsTable({ clients }: { clients: ClientView[] }) {
                 </SheetDescription>
               </SheetHeader>
               <div className="space-y-5 px-5 pb-6">
+                <form action={submitProfile} className="rounded-xl border bg-muted/35 p-4">
+                  <h3 className="font-extrabold text-sm">Канонический профиль</h3>
+                  <p className="mt-1 text-muted-foreground text-xs">
+                    Новые заявки не изменяют эти данные автоматически.
+                  </p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Input name="firstName" defaultValue={selected.firstName} aria-label="Имя" required />
+                    <Input name="lastName" defaultValue={selected.lastName} aria-label="Фамилия" required />
+                    <Input name="phone" defaultValue={selected.phone} aria-label="Телефон" required />
+                    <Input name="email" defaultValue={selected.email ?? ""} aria-label="Email" type="email" />
+                    <NativeSelect
+                      name="region"
+                      defaultValue={selected.region}
+                      aria-label="Регион"
+                      className="sm:col-span-2"
+                    >
+                      {MOLDOVA_REGIONS.map((region) => (
+                        <NativeSelectOption key={region} value={region}>
+                          {region}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </div>
+                  <Button type="submit" className="mt-3" disabled={pending}>
+                    {pending ? "Сохранение…" : "Сохранить профиль"}
+                  </Button>
+                  {message ? <p className="mt-2 text-sm" role="status">{message}</p> : null}
+                  {selected.profileAudits.length ? (
+                    <p className="mt-3 text-muted-foreground text-xs">
+                      Последнее изменение: {formatDate(selected.profileAudits[0].createdAt)} · {selected.profileAudits[0].actor}
+                    </p>
+                  ) : (
+                    <p className="mt-3 text-muted-foreground text-xs">Ручных изменений ещё нет.</p>
+                  )}
+                </form>
+
                 <section className="grid grid-cols-2 gap-3">
                   <a
                     href={`tel:${selected.phoneNormalized}`}

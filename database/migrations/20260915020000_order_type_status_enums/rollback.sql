@@ -1,0 +1,8 @@
+ALTER TABLE "Order"
+  ALTER COLUMN "type" TYPE TEXT USING ("type"::TEXT),
+  ALTER COLUMN "status" DROP DEFAULT,
+  ALTER COLUMN "status" TYPE TEXT USING ("status"::TEXT),
+  ALTER COLUMN "status" SET DEFAULT 'NEW';
+
+DROP TYPE "OrderStatus";
+DROP TYPE "OrderType";

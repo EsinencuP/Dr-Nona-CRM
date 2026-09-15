@@ -105,6 +105,24 @@ describe("application service", () => {
     expect(message).toContain("Lord Deodorant × 4 шт.");
   });
 
+  test("makes the temporary productSlugs-only quantity fallback observable", async () => {
+    const deps = dependencies(() => Promise.resolve(sent()));
+    await processApplication(input, deps);
+
+    expect(deps.logger).toHaveBeenCalledWith({
+      event: "application.contract.legacy_order_items",
+      requestId: "request-fixed",
+      fallbackQuantity: 1,
+    });
+    expect(deps.saveApplication).toHaveBeenCalledWith(
+      expect.objectContaining({
+        products: [{ slug: "lord-deodorant", quantity: 1 }],
+      }),
+      undefined,
+      undefined,
+    );
+  });
+
   test.each([
     ["ru-MD", "Язык: RU"],
     ["ro-MD", "Язык: RO"],

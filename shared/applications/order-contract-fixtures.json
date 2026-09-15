@@ -1,0 +1,46 @@
+{
+  "contractVersion": 1,
+  "allowedProductSlugs": ["lord-deodorant", "hand-nail-cream"],
+  "valid": [
+    {
+      "name": "exact quantity boundaries",
+      "productSlugs": ["lord-deodorant", "hand-nail-cream"],
+      "items": [
+        { "slug": "lord-deodorant", "quantity": 1 },
+        { "slug": "hand-nail-cream", "quantity": 99 }
+      ]
+    },
+    {
+      "name": "legacy product slugs only",
+      "productSlugs": ["lord-deodorant"]
+    }
+  ],
+  "invalid": [
+    {
+      "name": "duplicate product slugs",
+      "productSlugs": ["lord-deodorant", "lord-deodorant"],
+      "items": [
+        { "slug": "lord-deodorant", "quantity": 1 },
+        { "slug": "lord-deodorant", "quantity": 1 }
+      ]
+    },
+    {
+      "name": "missing quantity item",
+      "productSlugs": ["lord-deodorant", "hand-nail-cream"],
+      "items": [{ "slug": "lord-deodorant", "quantity": 1 }]
+    },
+    {
+      "name": "duplicate quantity item",
+      "productSlugs": ["lord-deodorant", "hand-nail-cream"],
+      "items": [
+        { "slug": "lord-deodorant", "quantity": 1 },
+        { "slug": "lord-deodorant", "quantity": 2 }
+      ]
+    },
+    {
+      "name": "quantity outside contract",
+      "productSlugs": ["lord-deodorant"],
+      "items": [{ "slug": "lord-deodorant", "quantity": 100 }]
+    }
+  ]
+}

@@ -1,6 +1,10 @@
-import { ApplicationSubmissionState, Prisma, PrismaClient } from "@prisma/client";
-
-let prisma: PrismaClient | undefined;
+import { ApplicationSubmissionState, Prisma } from "@prisma/client";
+import type {
+  OrderStatus,
+  OrderType,
+  PrismaClient,
+} from "@prisma/client";
+import { getPrismaClient } from "../../src/lib/prisma";
 
 function databaseFailureMetadata(error: unknown) {
   return {
@@ -10,10 +14,7 @@ function databaseFailureMetadata(error: unknown) {
 }
 
 export function getDbClient(): PrismaClient {
-  if (!prisma) {
-    prisma = new PrismaClient();
-  }
-  return prisma;
+  return getPrismaClient();
 }
 
 export type DbWriteInput = {
@@ -24,7 +25,7 @@ export type DbWriteInput = {
   phoneNormalized: string;
   email?: string;
   region: string;
-  type: "order" | "consultation" | "masterclass";
+  type: OrderType;
   comment?: string;
   preferredCallTime?: string;
   eventDate?: string;
@@ -54,7 +55,7 @@ export type DbWriteResult =
   | { success: true; orderId: string; disposition: "created" | "retry" | "replay" | "in_progress" }
   | { success: false; disposition: "conflict" | "failure"; error: string };
 
-export type OrderStatus = "NEW" | "PROCESSING" | "DELIVERY" | "DONE" | "CANCELLED";
+export type { OrderStatus };
 
 export async function deleteOrderFromDb(orderId: string, db: PrismaClient = getDbClient()): Promise<boolean> {
   const existing = await db.order.findUnique({
@@ -93,12 +94,7 @@ export async function saveApplicationToDb(
       const priceMap = new Map(catalogPrices.map((product) => [product.slug, product]));
       const client = await transaction.client.upsert({
         where: { phoneNormalized: input.phoneNormalized },
-        update: {
-          firstName: input.firstName,
-          lastName: input.lastName,
-          email: input.email ?? null,
-          region: input.region,
-        },
+        update: {},
         create: {
           firstName: input.firstName,
           lastName: input.lastName,
@@ -121,6 +117,11 @@ export async function saveApplicationToDb(
           eventTime: input.eventTime ?? null,
           masterclassTopic: input.masterclassTopic ?? null,
           consultationMode: input.consultationMode ?? null,
+          submittedFirstName: input.firstName,
+          submittedLastName: input.lastName,
+          submittedPhone: input.phone,
+          submittedEmail: input.email ?? null,
+          submittedRegion: input.region,
           utmSource: input.utmSource ?? null,
           utmMedium: input.utmMedium ?? null,
           utmCampaign: input.utmCampaign ?? null,

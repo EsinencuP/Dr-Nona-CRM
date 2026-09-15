@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { MASTERCLASS_TOPICS } from "../constants/masterclass-topics";
 import { MOLDOVA_REGIONS } from "../constants/moldova-regions";
+import { validateAppointmentWindow } from "./appointment-policy";
 
 const NAME_MAX = 60;
 const PHONE_MAX = 32;
@@ -59,8 +60,7 @@ export const orderItemSchema = z.object({
     .number()
     .int("Количество должно быть целым числом")
     .min(1, "Минимум 1 шт.")
-    .max(99, "Максимум 99 шт.")
-    .default(1),
+    .max(99, "Максимум 99 шт."),
 });
 
 export type OrderItemInput = z.infer<typeof orderItemSchema>;
@@ -78,7 +78,9 @@ const orderApplicationSchema = baseApplicationSchema.extend({
     )
     .min(1, "Выберите хотя бы один товар")
     .max(20, "Можно выбрать не более 20 товаров")
-    .transform((slugs) => [...new Set(slugs)]),
+    .refine((slugs) => new Set(slugs).size === slugs.length, {
+      message: "Список товаров содержит повторяющиеся позиции",
+    }),
   items: z.array(orderItemSchema).max(20).optional(),
 });
 
@@ -120,26 +122,6 @@ export type ApplicationValidationResult =
   | { success: true; data: ApplicationInput }
   | { success: false; fieldErrors: Record<string, string> };
 
-function isCalendarDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-}
-
-function chisinauLocalMinute(date: Date) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Chisinau",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
-  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${value.year}-${value.month}-${value.day}T${value.hour}:${value.minute}`;
-}
-
 function flattenFieldErrors(error: z.ZodError) {
   const errors: Record<string, string> = {};
   for (const issue of error.issues) {
@@ -169,21 +151,31 @@ export function validateApplicationInput(
       const itemSlugs = data.items.map((item) => item.slug);
       if (
         new Set(itemSlugs).size !== itemSlugs.length ||
+        itemSlugs.length !== data.productSlugs.length ||
         itemSlugs.some((slug) => !selectedSlugs.has(slug) || !options.allowedProductSlugs.has(slug))
+        || data.productSlugs.some((slug) => !itemSlugs.includes(slug))
       ) {
         fieldErrors.items = "Некорректные данные о количестве товаров";
       }
     }
   } else if (data.type === "consultation") {
-    if (!isCalendarDate(data.consultationDate)) {
+    const violation = validateAppointmentWindow("consultation", data.consultationDate, data.consultationTime, options.now);
+    if (violation === "invalid") {
       fieldErrors.consultationDate = "Некорректная дата";
-    } else if (`${data.consultationDate}T${data.consultationTime}` < chisinauLocalMinute(options.now ?? new Date())) {
+    } else if (violation === "before_minimum") {
       fieldErrors.consultationDate = "Выберите будущую дату и время по часовому поясу Кишинёва";
+    } else if (violation === "after_maximum") {
+      fieldErrors.consultationDate = "Выберите дату консультации не позднее чем через 90 дней";
     }
-  } else if (!isCalendarDate(data.eventDate)) {
-    fieldErrors.eventDate = "Некорректная дата";
-  } else if (`${data.eventDate}T${data.eventTime}` < chisinauLocalMinute(options.now ?? new Date())) {
-    fieldErrors.eventDate = "Выберите будущую дату и время по часовому поясу Кишинёва";
+  } else {
+    const violation = validateAppointmentWindow("masterclass", data.eventDate, data.eventTime, options.now);
+    if (violation === "invalid") {
+      fieldErrors.eventDate = "Некорректная дата";
+    } else if (violation === "before_minimum") {
+      fieldErrors.eventDate = "Выберите дату мастер-класса начиная со следующего дня";
+    } else if (violation === "after_maximum") {
+      fieldErrors.eventDate = "Выберите дату мастер-класса не позднее чем через 180 дней";
+    }
   }
 
   return Object.keys(fieldErrors).length ? { success: false, fieldErrors } : { success: true, data };

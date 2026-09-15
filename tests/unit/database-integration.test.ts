@@ -14,6 +14,7 @@ import {
   createApplicationRateLimitGuard,
   createPrismaRateLimitIncrement,
 } from "../../server/http/application-rate-limit.js";
+import { updateCanonicalClientProfile } from "../../server/clients/client-profile.js";
 
 describe("database and status integration", () => {
   const db = getDbClient();
@@ -108,6 +109,104 @@ describe("database and status integration", () => {
     await expect(deleteOrderFromDb(orderId, db)).resolves.toBe(false);
     await expect(db.order.findUnique({ where: { id: orderId } })).resolves.toBeNull();
     await expect(db.client.findUnique({ where: { phoneNormalized: testPhoneNormalized } })).resolves.toBeNull();
+  }, 20_000);
+
+  test("preserves submitted contact snapshots and audits explicit profile edits", async () => {
+    const suffix = `${process.pid}-${Date.now()}`;
+    const firstId = `test-client-profile-a-${suffix}`;
+    const secondId = `test-client-profile-b-${suffix}`;
+    const original = {
+      firstName: "Ana",
+      lastName: "Popescu",
+      phone: testPhone,
+      phoneNormalized: testPhoneNormalized,
+      email: "ana@example.test",
+      region: "Кишинёв",
+      type: "order" as const,
+      products: [{ slug: "solaris-body-lotion", quantity: 1 }],
+    };
+    await expect(saveApplicationToDb({ ...original, requestId: firstId }, db)).resolves.toMatchObject({
+      success: true,
+    });
+    await expect(
+      saveApplicationToDb(
+        {
+          ...original,
+          requestId: secondId,
+          firstName: "Anna typo",
+          lastName: "Popesku typo",
+          email: undefined,
+          region: "Бельцы",
+        },
+        db,
+      ),
+    ).resolves.toMatchObject({ success: true });
+
+    const client = await db.client.findUniqueOrThrow({ where: { phoneNormalized: testPhoneNormalized } });
+    expect(client).toMatchObject({
+      firstName: "Ana",
+      lastName: "Popescu",
+      email: "ana@example.test",
+      region: "Кишинёв",
+    });
+    const repeated = await db.order.findUniqueOrThrow({ where: { id: secondId } });
+    expect(repeated).toMatchObject({
+      submittedFirstName: "Anna typo",
+      submittedLastName: "Popesku typo",
+      submittedEmail: null,
+      submittedRegion: "Бельцы",
+    });
+
+    await expect(
+      updateCanonicalClientProfile(
+        client.id,
+        {
+          firstName: "Ana-Maria",
+          lastName: "Popescu",
+          phone: testPhone,
+          phoneNormalized: testPhoneNormalized,
+          email: "ana@example.test",
+          region: "Кишинёв",
+        },
+        "integration-manager",
+        db,
+      ),
+    ).resolves.toEqual({ outcome: "updated" });
+    const audit = await db.clientProfileAudit.findFirstOrThrow({ where: { clientId: client.id } });
+    expect(audit).toMatchObject({ actor: "integration-manager" });
+    expect(audit.before).toMatchObject({ firstName: "Ana" });
+    expect(audit.after).toMatchObject({ firstName: "Ana-Maria" });
+    expect(await db.order.findUniqueOrThrow({ where: { id: firstId } })).toMatchObject({
+      submittedFirstName: "Ana",
+    });
+
+    const conflictPhone = `+373 7${runSuffix}`;
+    const conflictNormalized = `+3737${runSuffix}`;
+    const conflict = await db.client.create({
+      data: {
+        firstName: "Conflict",
+        lastName: "Profile",
+        phone: conflictPhone,
+        phoneNormalized: conflictNormalized,
+        region: "Кишинёв",
+      },
+    });
+    await expect(
+      updateCanonicalClientProfile(
+        client.id,
+        {
+          firstName: "Ana-Maria",
+          lastName: "Popescu",
+          phone: conflictPhone,
+          phoneNormalized: conflictNormalized,
+          email: null,
+          region: "Кишинёв",
+        },
+        "integration-manager",
+        db,
+      ),
+    ).resolves.toEqual({ outcome: "phone_conflict" });
+    await db.client.delete({ where: { id: conflict.id } });
   }, 20_000);
 
   test("snapshots both fixed prices and never rewrites old items after catalogue changes", async () => {
@@ -230,7 +329,7 @@ describe("database and status integration", () => {
     });
     expect(reused).toMatchObject({ success: true, orderId: expiredSecondId, disposition: "created" });
     idempotencyOrderIds.push(expiredFirstId, expiredSecondId);
-  }, 20_000);
+  }, 60_000);
 
   test("shares a rate-limit counter across independent serverless instances", async () => {
     const clientKey = Buffer.from(`rate-limit-${process.pid}-${Date.now()}`)

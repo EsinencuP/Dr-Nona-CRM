@@ -21,6 +21,9 @@ import { requireCrmAccess } from "@/server/crm-auth";
 
 import { deleteOrderFromDb } from "../../../server/applications/application-db";
 import { fixedPriceSchema } from "../../../server/catalog/fixed-prices";
+import { updateCanonicalClientProfile } from "../../../server/clients/client-profile";
+import { normalizePhone } from "../../../shared/applications/application-schema";
+import { MOLDOVA_REGIONS } from "../../../shared/constants/moldova-regions";
 import { aggregateDashboard, normalizeRange, startDateForRange } from "./dashboard/_components/dashboard-data";
 
 const statusSchema = z.enum(ORDER_STATUSES);
@@ -194,6 +197,13 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
       utmCampaign: order.utmCampaign,
       entryPoint: order.entryPoint,
       sessionHistory: parseHistory(order.sessionHistory),
+      submitted: {
+        firstName: order.submittedFirstName,
+        lastName: order.submittedLastName,
+        phone: order.submittedPhone,
+        email: order.submittedEmail,
+        region: order.submittedRegion,
+      },
       client: {
         id: order.client.id,
         firstName: order.client.firstName,
@@ -286,6 +296,11 @@ export async function getClients(search = ""): Promise<ClientView[]> {
         }
       : undefined,
     include: {
+      profileAudits: {
+        select: { id: true, actor: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      },
       orders: {
         include: { items: true },
         orderBy: { createdAt: "desc" },
@@ -324,8 +339,74 @@ export async function getClients(search = ""): Promise<ClientView[]> {
         status: toStatus(order.status),
         value: order.items.reduce((total, item) => total + item.priceAtPurchase * item.quantity, 0),
       })),
+      profileAudits: client.profileAudits.map((audit) => ({
+        id: audit.id,
+        actor: audit.actor,
+        createdAt: audit.createdAt.toISOString(),
+      })),
     };
   });
+}
+
+const clientProfileSchema = z.object({
+  firstName: z.string().trim().min(1).max(60),
+  lastName: z.string().trim().min(1).max(60),
+  phone: z
+    .string()
+    .trim()
+    .min(1)
+    .max(32)
+    .regex(/^[\d\s+()-]+$/u)
+    .refine((value) => {
+      const digits = value.replace(/\D/g, "");
+      return digits.length >= 7 && digits.length <= 15;
+    }),
+  email: z.string().trim().email().optional().or(z.literal("")),
+  region: z.enum(MOLDOVA_REGIONS),
+});
+
+export async function updateClientProfile(
+  clientId: string,
+  rawProfile: z.input<typeof clientProfileSchema>,
+) {
+  await requireCrmAccess();
+  const actor = process.env.CRM_BASIC_USER || "local-development";
+  const parsedId = z.string().uuid().safeParse(clientId);
+  const parsed = clientProfileSchema.safeParse(rawProfile);
+  if (!parsedId.success || !parsed.success) {
+    return { ok: false, message: "Проверьте данные профиля клиента." };
+  }
+
+  const phone = normalizePhone(parsed.data.phone);
+  const result = await updateCanonicalClientProfile(
+    parsedId.data,
+    {
+      firstName: parsed.data.firstName,
+      lastName: parsed.data.lastName,
+      phone: phone.phone,
+      phoneNormalized: phone.phoneNormalized,
+      email: parsed.data.email || null,
+      region: parsed.data.region,
+    },
+    actor,
+    prisma,
+  );
+  if (result.outcome === "not_found") {
+    return { ok: false, message: "Клиент не найден." };
+  }
+  if (result.outcome === "phone_conflict") {
+    return {
+      ok: false,
+      message: "Этот телефон уже принадлежит другому профилю. Автоматическое объединение запрещено.",
+    };
+  }
+  if (result.outcome === "no_change") {
+    return { ok: true, message: "Изменений нет." };
+  }
+  revalidatePath("/clients");
+  revalidatePath("/orders");
+  revalidatePath("/dashboard");
+  return { ok: true, message: "Профиль обновлён; изменение записано в журнал." };
 }
 
 export async function getCatalogProducts(): Promise<CatalogProductView[]> {

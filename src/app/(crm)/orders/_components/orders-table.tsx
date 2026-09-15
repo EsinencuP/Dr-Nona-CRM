@@ -67,6 +67,42 @@ function OrderDetail({ order }: { order: OrderView }) {
         )}
       </section>
 
+      <section className="rounded-xl border bg-white p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-extrabold text-sm">Данные в этой заявке</h3>
+          <span className="text-muted-foreground text-xs">Неизменяемый снимок</span>
+        </div>
+        <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-muted-foreground text-xs">Имя</dt>
+            <dd className="font-semibold">
+              {order.submitted.firstName} {order.submitted.lastName}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground text-xs">Регион</dt>
+            <dd className="font-semibold">{order.submitted.region}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground text-xs">Телефон</dt>
+            <dd className="font-semibold">{order.submitted.phone}</dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground text-xs">Email</dt>
+            <dd className="break-all font-semibold">{order.submitted.email ?? "Не указан"}</dd>
+          </div>
+        </dl>
+        {order.submitted.firstName !== order.client.firstName ||
+        order.submitted.lastName !== order.client.lastName ||
+        order.submitted.phone !== order.client.phone ||
+        order.submitted.email !== order.client.email ||
+        order.submitted.region !== order.client.region ? (
+          <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-amber-900 text-xs">
+            Данные заявки отличаются от текущего канонического профиля.
+          </p>
+        ) : null}
+      </section>
+
       <section>
         <div className="mb-2 flex items-center justify-between gap-3">
           <h3 className="font-extrabold text-xl tracking-[-0.02em]">Состав заявки</h3>

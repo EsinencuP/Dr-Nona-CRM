@@ -24,8 +24,36 @@ model Client {
   updatedAt       DateTime @updatedAt
 
   orders          Order[]
+  profileAudits   ClientProfileAudit[]
 
   @@index([region])                            // For future "sales by region" reports
+}
+
+model ClientProfileAudit {
+  id        String   @id @default(uuid())
+  clientId  String
+  actor     String
+  before    Json
+  after     Json
+  createdAt DateTime @default(now())
+
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, createdAt])
+}
+
+enum OrderType {
+  order
+  consultation
+  masterclass
+}
+
+enum OrderStatus {
+  NEW
+  PROCESSING
+  DELIVERY
+  DONE
+  CANCELLED
 }
 
 // ─── TABLE 2: Order ────────────────────────────────────────────────────────
@@ -35,8 +63,8 @@ model Client {
 model Order {
   id                  String   @id @default(uuid())
   clientId            String
-  type                String                   // "order" | "consultation" | "masterclass"
-  status              String   @default("NEW") // "NEW" | "PROCESSING" | "DELIVERY" | "DONE" | "CANCELLED"
+  type                OrderType
+  status              OrderStatus @default(NEW)
 
   // Optional fields — filled depending on request type
   comment             String?                  // Free-text comment from client
@@ -45,6 +73,13 @@ model Order {
   eventTime           String?                  // "14:00"
   masterclassTopic    String?                  // Only for type="masterclass"
   consultationMode    String?                  // "online" | "offline"
+
+  // Immutable contact snapshot exactly as submitted with this request.
+  submittedFirstName  String
+  submittedLastName   String
+  submittedPhone      String
+  submittedEmail      String?
+  submittedRegion     String
 
   // Marketing analytics — collected automatically from URL
   utmSource           String?                  // e.g. "facebook", "instagram", "google"
