@@ -11,6 +11,7 @@ import { STATUS_DELIVERY, STATUS_PENDING, STATUS_PROCESSING } from "../../server
 const env = {
   botToken: "test-bot-token",
   webhookSecret: "test-secret-123",
+  chatId: "-100123",
 };
 
 const makeRequest = (
@@ -99,6 +100,14 @@ describe("POST /api/telegram-webhook", () => {
     expect(response.status).toBe(503);
   });
 
+  test("returns 503 when the configured Telegram chat is missing", async () => {
+    const handler = createTelegramWebhookHandler({
+      getEnvironment: () => ({ botToken: env.botToken, webhookSecret: env.webhookSecret, chatId: "" }),
+    });
+    const response = await handler(makeRequest(replyUpdate("готово")));
+    expect(response.status).toBe(503);
+  });
+
   test("returns 403 when secret token is wrong", async () => {
     const handler = createTelegramWebhookHandler({
       getEnvironment: () => env,
@@ -120,7 +129,7 @@ describe("POST /api/telegram-webhook", () => {
         update_id: 2,
         message: {
           message_id: 20,
-          chat: { id: 123 },
+          chat: { id: -100123 },
           text: "ok",
           reply_to_message: {
             message_id: 19,
@@ -134,6 +143,31 @@ describe("POST /api/telegram-webhook", () => {
     expect(response.status).toBe(200);
     expect(editMessage).not.toHaveBeenCalled();
     expect(updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  test("ignores a valid command from any chat other than the configured manager chat", async () => {
+    const editMessage = vi.fn();
+    const deleteMessage = vi.fn();
+    const updateOrderStatus = vi.fn();
+    const logger = vi.fn();
+    const handler = createTelegramWebhookHandler({
+      getEnvironment: () => env,
+      editMessage,
+      deleteMessage,
+      updateOrderStatus,
+      logger,
+    });
+    const update = replyUpdate("готово");
+    if (update.message) update.message.chat.id = -100999;
+
+    const response = await handler(makeRequest(update));
+
+    expect(response.status).toBe(200);
+    expect(updateOrderStatus).not.toHaveBeenCalled();
+    expect(editMessage).not.toHaveBeenCalled();
+    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(logger).toHaveBeenCalledWith({ event: "webhook.ignored", reason: "chat_mismatch" });
+    expect(JSON.stringify(logger.mock.calls)).not.toContain("-100999");
   });
 
   test("ignores unknown commands and bot messages without a status line", async () => {
@@ -199,6 +233,7 @@ describe("POST /api/telegram-webhook", () => {
           databaseUpdated: true,
         }),
       );
+      expect(JSON.stringify(logger.mock.calls)).not.toMatch(/Manager|-100123/u);
     },
   );
 

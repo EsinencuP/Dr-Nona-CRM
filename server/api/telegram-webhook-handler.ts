@@ -84,7 +84,7 @@ async function getUpdatePayload(request: Request): Promise<TelegramUpdate | null
 }
 
 export type WebhookHandlerDependencies = {
-  getEnvironment?: () => { botToken: string; webhookSecret: string } | null;
+  getEnvironment?: () => { botToken: string; webhookSecret: string; chatId: string } | null;
   editMessage?: typeof editTelegramMessage;
   deleteMessage?: typeof deleteTelegramMessage;
   updateOrderStatus?: typeof updateOrderStatusByTelegramMessageId;
@@ -93,6 +93,7 @@ export type WebhookHandlerDependencies = {
 
 export function createTelegramWebhookHandler(dependencies: WebhookHandlerDependencies = {}) {
   return async function telegramWebhookHandler(request: Request): Promise<Response> {
+    const logFn = dependencies.logger ?? console.info;
     try {
       if (request.method !== "POST") {
         return jsonResponse({ ok: false, code: "METHOD_NOT_ALLOWED" }, 405, {
@@ -105,9 +106,10 @@ export function createTelegramWebhookHandler(dependencies: WebhookHandlerDepende
         : {
             botToken: process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "",
             webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET?.trim() ?? "",
+            chatId: process.env.TELEGRAM_CHAT_ID?.trim() ?? "",
           };
 
-      if (!env?.botToken || !env?.webhookSecret) {
+      if (!env?.botToken || !env?.webhookSecret || !env?.chatId) {
         return jsonResponse({ ok: false, code: "SERVICE_UNAVAILABLE" }, 503);
       }
 
@@ -123,6 +125,10 @@ export function createTelegramWebhookHandler(dependencies: WebhookHandlerDepende
       }
 
       const message = update.message;
+      if (String(message.chat.id) !== env.chatId) {
+        logFn({ event: "webhook.ignored", reason: "chat_mismatch" });
+        return jsonResponse({ ok: true }, 200);
+      }
       if (!message.text || !message.reply_to_message) {
         return jsonResponse({ ok: true }, 200);
       }
@@ -151,7 +157,6 @@ export function createTelegramWebhookHandler(dependencies: WebhookHandlerDepende
       const updateStatusFn = dependencies.updateOrderStatus ?? updateOrderStatusByTelegramMessageId;
       const editFn = dependencies.editMessage ?? editTelegramMessage;
       const deleteFn = dependencies.deleteMessage ?? deleteTelegramMessage;
-      const logFn = dependencies.logger ?? console.info;
       const orderMessageId = message.reply_to_message.message_id;
       const managerCommandMessageId = message.message_id;
       const chatId = message.chat.id;
@@ -176,16 +181,14 @@ export function createTelegramWebhookHandler(dependencies: WebhookHandlerDepende
 
       logFn({
         event: "webhook.status_update",
-        chatId,
         originalMessageId: orderMessageId,
-        replyFrom: message.from?.first_name,
         newStatus: matchedStatus,
         databaseUpdated,
       });
 
       return jsonResponse({ ok: true }, 200);
-    } catch (error) {
-      console.error("Telegram webhook uncaught error:", error);
+    } catch {
+      logFn({ event: "webhook.uncaught", outcome: "ignored" });
       return jsonResponse({ ok: true }, 200);
     }
   };
