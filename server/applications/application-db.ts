@@ -2,6 +2,13 @@ import { ApplicationSubmissionState, Prisma, PrismaClient } from "@prisma/client
 
 let prisma: PrismaClient | undefined;
 
+function databaseFailureMetadata(error: unknown) {
+  return {
+    errorName: error instanceof Error ? error.name : "UnknownError",
+    ...(error instanceof Prisma.PrismaClientKnownRequestError ? { errorCode: error.code } : {}),
+  };
+}
+
 export function getDbClient(): PrismaClient {
   if (!prisma) {
     prisma = new PrismaClient();
@@ -211,7 +218,7 @@ export async function completeApplicationDelivery(
   } catch (error) {
     console.error("[applications.db] Delivery completion update failed", {
       orderId,
-      error: error instanceof Error ? error.message : String(error),
+      ...databaseFailureMetadata(error),
     });
     return false;
   }
@@ -231,7 +238,7 @@ export async function markApplicationDeliveryFailed(
   } catch (error) {
     console.error("[applications.db] Delivery failure state update failed", {
       orderId,
-      error: error instanceof Error ? error.message : String(error),
+      ...databaseFailureMetadata(error),
     });
     return false;
   }
@@ -250,7 +257,7 @@ export async function saveMessageIdToDb(
   } catch (error) {
     console.error("[applications.db] Telegram message ID update failed", {
       orderId,
-      error: error instanceof Error ? error.message : String(error),
+      ...databaseFailureMetadata(error),
     });
   }
 }
@@ -272,7 +279,7 @@ export async function updateOrderStatusByTelegramMessageId(
     });
     return true;
   } catch (error) {
-    console.error("Failed to update order status in DB:", error);
+    console.error("[applications.db] Status update failed", databaseFailureMetadata(error));
     return false;
   }
 }

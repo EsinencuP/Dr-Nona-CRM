@@ -135,8 +135,8 @@ export async function processApplication(
   dependencies.logger?.({
     event: "application.db.write",
     requestId,
-    dbSuccess: dbResult.success,
-    ...(!dbResult.success && { dbError: dbResult.error }),
+    outcome: dbResult.success ? "success" : "failure",
+    ...(!dbResult.success && { failureClass: "database_write" }),
   });
   if (!dbResult.success) {
     dependencies.logger?.({
@@ -144,6 +144,7 @@ export async function processApplication(
       requestId,
       type: record.type,
       telegramStatus: "skipped",
+      failureClass: "database_write",
       durationMs: Date.now() - startedAt,
     });
     if (dbResult.disposition === "conflict") {
@@ -188,6 +189,14 @@ export async function processApplication(
       telegramResult.providerMessageId,
     );
     if (!completionSaved) {
+      dependencies.logger?.({
+        event: "application.delivery.completed",
+        requestId: activeRequestId,
+        type: record.type,
+        telegramStatus: "sent_unconfirmed",
+        failureClass: "delivery_state_persistence",
+        durationMs: Date.now() - startedAt,
+      });
       return {
         requestId: activeRequestId,
         type: record.type,
@@ -214,6 +223,10 @@ export async function processApplication(
     requestId: activeRequestId,
     type: record.type,
     telegramStatus: delivery.telegram,
+    ...(outcome === "failure" && {
+      failureClass: "telegram_delivery",
+      providerErrorCode: telegramResult?.status === "failed" ? telegramResult.errorCode : "PROVIDER_UNAVAILABLE",
+    }),
     durationMs: Date.now() - startedAt,
   });
   return { requestId: activeRequestId, type: record.type, delivery, outcome };

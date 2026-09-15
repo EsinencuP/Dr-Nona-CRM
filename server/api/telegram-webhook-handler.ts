@@ -184,6 +184,7 @@ export function createTelegramWebhookHandler(dependencies: WebhookHandlerDepende
         originalMessageId: orderMessageId,
         newStatus: matchedStatus,
         databaseUpdated,
+        ...(!databaseUpdated && { failureClass: "database_status_update" }),
       });
 
       return jsonResponse({ ok: true }, 200);

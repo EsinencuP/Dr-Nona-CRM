@@ -1,7 +1,10 @@
 import { CheckCircle2, Clock3, Inbox, Package, TrendingUp, Truck, UserPlus, XCircle } from "lucide-react";
 import type { Metadata } from "next";
 
+import { getApplicationHealth } from "@/server/application-health";
+
 import { getDashboardStats } from "../actions";
+import { ApplicationHealthCard } from "./_components/application-health-card";
 import { ChartCard } from "./_components/chart-card";
 import { dashboardRanges, normalizeRange } from "./_components/dashboard-data";
 import { dashboardMoney, dashboardNumber } from "./_components/dashboard-format";
@@ -23,7 +26,7 @@ export default async function DashboardPage({
   searchParams: Promise<{ range?: string | string[] }>;
 }) {
   const range = normalizeRange((await searchParams).range);
-  const stats = await getDashboardStats(range);
+  const [stats, applicationHealth] = await Promise.all([getDashboardStats(range), getApplicationHealth()]);
   const period = dashboardRanges.find((option) => option.value === range)?.label ?? "Месяц";
   const incomplete =
     stats.quality.missingRetail +
@@ -35,6 +38,7 @@ export default async function DashboardPage({
     <div className={`${styles.dashboard} -m-4 space-y-5 bg-slate-50 px-4 py-5 md:-m-6 md:px-6 xl:-m-7 xl:px-7`}>
       <DashboardHeader range={range} asOf={stats.asOf} />
       <div id="dashboard-panel" role="tabpanel" aria-labelledby={`range-${range}`} className="space-y-5">
+        <ApplicationHealthCard health={applicationHealth} />
         {incomplete && (
           <p role="status" className="rounded-xl border border-slate-200 bg-white p-4 text-slate-500 text-sm leading-6">
             Цены для некоторых товаров не заданы — выручка может быть занижена. Без розничных снимков:{" "}
