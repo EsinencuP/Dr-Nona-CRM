@@ -16,9 +16,7 @@ function databaseHostname(value: string) {
   }
 }
 
-export function assertPooledRuntimeDatabaseUrl(
-  environment: DatabaseEnvironment = process.env
-) {
+export function assertPooledRuntimeDatabaseUrl(environment: DatabaseEnvironment = process.env) {
   const runtimeUrl = environment.DATABASE_URL;
   if (!runtimeUrl || environment.NODE_ENV !== "production") return;
 
@@ -27,14 +25,9 @@ export function assertPooledRuntimeDatabaseUrl(
 
   const directUrl = environment.DATABASE_URL_UNPOOLED;
   if (directUrl && runtimeHost === databaseHostname(directUrl)) {
-    throw new Error(
-      "DATABASE_URL must use the pooled endpoint; reserve DATABASE_URL_UNPOOLED for migrations"
-    );
+    throw new Error("DATABASE_URL must use the pooled endpoint; reserve DATABASE_URL_UNPOOLED for migrations");
   }
-  if (
-    runtimeHost.endsWith(".neon.tech") &&
-    !runtimeHost.includes("-pooler.")
-  ) {
+  if (runtimeHost.endsWith(".neon.tech") && !runtimeHost.includes("-pooler.")) {
     throw new Error("Production Neon DATABASE_URL must use a pooler hostname");
   }
 }

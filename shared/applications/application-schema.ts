@@ -56,11 +56,7 @@ export const orderItemSchema = z.object({
     .min(1, "Некорректный товар")
     .max(SLUG_MAX, "Некорректный товар")
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, "Некорректный товар"),
-  quantity: z
-    .number()
-    .int("Количество должно быть целым числом")
-    .min(1, "Минимум 1 шт.")
-    .max(99, "Максимум 99 шт."),
+  quantity: z.number().int("Количество должно быть целым числом").min(1, "Минимум 1 шт.").max(99, "Максимум 99 шт."),
 });
 
 export type OrderItemInput = z.infer<typeof orderItemSchema>;
@@ -152,14 +148,19 @@ export function validateApplicationInput(
       if (
         new Set(itemSlugs).size !== itemSlugs.length ||
         itemSlugs.length !== data.productSlugs.length ||
-        itemSlugs.some((slug) => !selectedSlugs.has(slug) || !options.allowedProductSlugs.has(slug))
-        || data.productSlugs.some((slug) => !itemSlugs.includes(slug))
+        itemSlugs.some((slug) => !selectedSlugs.has(slug) || !options.allowedProductSlugs.has(slug)) ||
+        data.productSlugs.some((slug) => !itemSlugs.includes(slug))
       ) {
         fieldErrors.items = "Некорректные данные о количестве товаров";
       }
     }
   } else if (data.type === "consultation") {
-    const violation = validateAppointmentWindow("consultation", data.consultationDate, data.consultationTime, options.now);
+    const violation = validateAppointmentWindow(
+      "consultation",
+      data.consultationDate,
+      data.consultationTime,
+      options.now,
+    );
     if (violation === "invalid") {
       fieldErrors.consultationDate = "Некорректная дата";
     } else if (violation === "before_minimum") {

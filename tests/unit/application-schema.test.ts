@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 
 import { normalizePhone, validateApplicationInput } from "../../shared/applications/application-schema";
+import orderContractFixtures from "../../shared/applications/order-contract-fixtures.json";
 import { MASTERCLASS_TOPICS } from "../../shared/constants/masterclass-topics";
 import { MOLDOVA_REGIONS } from "../../shared/constants/moldova-regions";
-import orderContractFixtures from "../../shared/applications/order-contract-fixtures.json";
 
 const allowed = new Set(["lord-deodorant"]);
 const base = {

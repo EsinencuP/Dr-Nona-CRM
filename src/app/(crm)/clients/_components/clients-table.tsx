@@ -13,8 +13,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDate, formatLei, typeLabels } from "@/lib/crm-labels";
 import type { ClientView } from "@/lib/crm-types";
-import { MOLDOVA_REGIONS } from "../../../../../shared/constants/moldova-regions";
 
+import { MOLDOVA_REGIONS } from "../../../../../shared/constants/moldova-regions";
 import { StatusBadge } from "../../_components/status-badge";
 import { updateClientProfile } from "../../actions";
 
@@ -203,10 +203,15 @@ export function ClientsTable({ clients }: { clients: ClientView[] }) {
                   <Button type="submit" className="mt-3" disabled={pending}>
                     {pending ? "Сохранение…" : "Сохранить профиль"}
                   </Button>
-                  {message ? <p className="mt-2 text-sm" role="status">{message}</p> : null}
+                  {message ? (
+                    <p className="mt-2 text-sm" role="status">
+                      {message}
+                    </p>
+                  ) : null}
                   {selected.profileAudits.length ? (
                     <p className="mt-3 text-muted-foreground text-xs">
-                      Последнее изменение: {formatDate(selected.profileAudits[0].createdAt)} · {selected.profileAudits[0].actor}
+                      Последнее изменение: {formatDate(selected.profileAudits[0].createdAt)} ·{" "}
+                      {selected.profileAudits[0].actor}
                     </p>
                   ) : (
                     <p className="mt-3 text-muted-foreground text-xs">Ручных изменений ещё нет.</p>

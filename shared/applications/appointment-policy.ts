@@ -12,10 +12,7 @@ export const APPOINTMENT_WINDOWS = {
 } as const;
 
 export type AppointmentKind = keyof typeof APPOINTMENT_WINDOWS;
-export type AppointmentWindowViolation =
-  | "invalid"
-  | "before_minimum"
-  | "after_maximum";
+export type AppointmentWindowViolation = "invalid" | "before_minimum" | "after_maximum";
 
 export function chisinauLocalMinute(date: Date) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -74,7 +71,7 @@ export function validateAppointmentWindow(
   kind: AppointmentKind,
   date: string,
   time: string,
-  now = new Date()
+  now = new Date(),
 ): AppointmentWindowViolation | null {
   if (!isCalendarDate(date) || !/^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(time)) {
     return "invalid";

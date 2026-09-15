@@ -365,10 +365,7 @@ const clientProfileSchema = z.object({
   region: z.enum(MOLDOVA_REGIONS),
 });
 
-export async function updateClientProfile(
-  clientId: string,
-  rawProfile: z.input<typeof clientProfileSchema>,
-) {
+export async function updateClientProfile(clientId: string, rawProfile: z.input<typeof clientProfileSchema>) {
   await requireCrmAccess();
   const actor = process.env.CRM_BASIC_USER || "local-development";
   const parsedId = z.string().uuid().safeParse(clientId);

@@ -1,7 +1,4 @@
-import type {
-  OrderStatus as PrismaOrderStatus,
-  OrderType as PrismaOrderType,
-} from "@prisma/client";
+import type { OrderStatus as PrismaOrderStatus, OrderType as PrismaOrderType } from "@prisma/client";
 
 export const ORDER_STATUSES = [
   "NEW",
@@ -12,11 +9,7 @@ export const ORDER_STATUSES = [
 ] as const satisfies readonly PrismaOrderStatus[];
 export type OrderStatus = PrismaOrderStatus;
 
-export const ORDER_TYPES = [
-  "order",
-  "consultation",
-  "masterclass",
-] as const satisfies readonly PrismaOrderType[];
+export const ORDER_TYPES = ["order", "consultation", "masterclass"] as const satisfies readonly PrismaOrderType[];
 export type OrderType = PrismaOrderType;
 
 export type DashboardRange = "7d" | "30d" | "90d" | "all";

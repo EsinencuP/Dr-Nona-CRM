@@ -10,11 +10,11 @@ import {
   saveMessageIdToDb,
   updateOrderStatusByTelegramMessageId,
 } from "../../server/applications/application-db.js";
+import { updateCanonicalClientProfile } from "../../server/clients/client-profile.js";
 import {
   createApplicationRateLimitGuard,
   createPrismaRateLimitIncrement,
 } from "../../server/http/application-rate-limit.js";
-import { updateCanonicalClientProfile } from "../../server/clients/client-profile.js";
 
 describe("database and status integration", () => {
   const db = getDbClient();

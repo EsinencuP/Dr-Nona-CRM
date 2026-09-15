@@ -1,9 +1,6 @@
+import type { OrderStatus, OrderType, PrismaClient } from "@prisma/client";
 import { ApplicationSubmissionState, Prisma } from "@prisma/client";
-import type {
-  OrderStatus,
-  OrderType,
-  PrismaClient,
-} from "@prisma/client";
+
 import { getPrismaClient } from "../../src/lib/prisma";
 
 function databaseFailureMetadata(error: unknown) {
