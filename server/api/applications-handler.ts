@@ -3,6 +3,7 @@ import { processApplication } from "../applications/application-service";
 import type { ApplicationProduct } from "../applications/application-types";
 import { sendTelegramApplication } from "../applications/providers/telegram-provider";
 import { type ContactEnvironment, readContactEnvironment } from "../config/contact-env";
+import { type ProxyVerification, verifyApplicationProxyRequest } from "../http/application-proxy-signature";
 import { applicationRateLimitGuard, type RateLimitDecision } from "../http/application-rate-limit";
 import { jsonResponse } from "../http/json-response";
 import { readJsonBody, requestOriginIsAllowed } from "../http/request-validation";
@@ -33,6 +34,7 @@ export type ApplicationsHandlerDependencies = {
   environment?: () => { success: true; value: ContactEnvironment } | { success: false; missing: string[] };
   process?: typeof processApplication;
   rateLimitGuard?: (request: Request) => Promise<boolean | RateLimitDecision>;
+  verifyProxy?: (request: Request, secret: string) => Promise<ProxyVerification>;
   logger?: (metadata: Record<string, unknown>) => void;
 };
 
@@ -49,10 +51,26 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
     if (!requestOriginIsAllowed(request, environment.allowedOrigins)) {
       return jsonResponse({ ok: false, code: "FORBIDDEN" }, 403);
     }
+    const proxyVerification = await (dependencies.verifyProxy ?? verifyApplicationProxyRequest)(
+      request,
+      environment.proxySharedSecret,
+    );
+    if (!proxyVerification.valid) {
+      (dependencies.logger ?? console.info)({
+        event: "application.proxy.rejected",
+        reason: proxyVerification.reason,
+      });
+      return jsonResponse({ ok: false, code: "FORBIDDEN" }, 403);
+    }
     const rateLimitResult = await (dependencies.rateLimitGuard ?? applicationRateLimitGuard)(request);
     const rateLimitAllowed = typeof rateLimitResult === "boolean" ? rateLimitResult : rateLimitResult.allowed;
     if (!rateLimitAllowed) {
       const retryAfterSeconds = typeof rateLimitResult === "boolean" ? 60 : rateLimitResult.retryAfterSeconds;
+      if (typeof rateLimitResult !== "boolean" && rateLimitResult.reason !== "limit") {
+        return jsonResponse({ ok: false, code: "SERVICE_UNAVAILABLE" }, 503, {
+          "Retry-After": String(retryAfterSeconds),
+        });
+      }
       return jsonResponse({ ok: false, code: "RATE_LIMITED" }, 429, { "Retry-After": String(retryAfterSeconds) });
     }
     const body = await readJsonBody(request);

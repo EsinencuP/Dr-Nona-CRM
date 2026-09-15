@@ -96,6 +96,19 @@ model ApplicationSubmission {
   @@index([expiresAt])
 }
 
+// Fixed-window counter shared by every serverless instance. clientKey is already HMAC-anonymized by the trusted proxy.
+model ApplicationRateLimitBucket {
+  id          String   @id
+  clientKey   String
+  windowStart DateTime
+  attempts    Int      @default(1)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([expiresAt])
+}
+
 // ─── TABLE 3: OrderItem ────────────────────────────────────────────────────
 // One row per product line in an order.
 // productSlug matches the slug field in products.json on the frontend.

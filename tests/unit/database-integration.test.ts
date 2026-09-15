@@ -10,6 +10,10 @@ import {
   saveMessageIdToDb,
   updateOrderStatusByTelegramMessageId,
 } from "../../server/applications/application-db.js";
+import {
+  createApplicationRateLimitGuard,
+  createPrismaRateLimitIncrement,
+} from "../../server/http/application-rate-limit.js";
 
 describe("database and status integration", () => {
   const db = getDbClient();
@@ -18,6 +22,7 @@ describe("database and status integration", () => {
   const testPhoneNormalized = `+3736${runSuffix}`;
   const priceTestSlug = `test-price-snapshot-${process.pid}-${Date.now()}`;
   const idempotencyOrderIds: string[] = [];
+  const rateLimitClientKeys: string[] = [];
 
   afterAll(async () => {
     const client = await db.client.findUnique({
@@ -39,6 +44,7 @@ describe("database and status integration", () => {
     for (const orderId of idempotencyOrderIds) {
       await deleteOrderFromDb(orderId, db);
     }
+    await db.applicationRateLimitBucket.deleteMany({ where: { clientKey: { in: rateLimitClientKeys } } });
     await db.$disconnect();
   });
 
@@ -58,7 +64,7 @@ describe("database and status integration", () => {
       },
       db,
     );
-    expect(saveResult).toEqual({ success: true, orderId });
+    expect(saveResult).toEqual({ success: true, orderId, disposition: "created" });
 
     await saveMessageIdToDb(orderId, telegramMessageId, db);
 
@@ -119,7 +125,11 @@ describe("database and status integration", () => {
       type: "order" as const,
       products: [{ slug: priceTestSlug, quantity: 2 }],
     };
-    await expect(saveApplicationToDb(input, db)).resolves.toEqual({ success: true, orderId: firstId });
+    await expect(saveApplicationToDb(input, db)).resolves.toEqual({
+      success: true,
+      orderId: firstId,
+      disposition: "created",
+    });
     await db.productCatalog.update({
       where: { slug: priceTestSlug },
       data: { retailPrice: 140, distributorPrice: 90 },
@@ -128,6 +138,7 @@ describe("database and status integration", () => {
     await expect(saveApplicationToDb({ ...input, requestId: secondId }, db)).resolves.toEqual({
       success: true,
       orderId: secondId,
+      disposition: "created",
     });
     const first = await db.orderItem.findFirstOrThrow({ where: { orderId: firstId } });
     const second = await db.orderItem.findFirstOrThrow({ where: { orderId: secondId } });
@@ -219,5 +230,24 @@ describe("database and status integration", () => {
     });
     expect(reused).toMatchObject({ success: true, orderId: expiredSecondId, disposition: "created" });
     idempotencyOrderIds.push(expiredFirstId, expiredSecondId);
+  }, 20_000);
+
+  test("shares a rate-limit counter across independent serverless instances", async () => {
+    const clientKey = Buffer.from(`rate-limit-${process.pid}-${Date.now()}`)
+      .toString("base64url")
+      .padEnd(43, "a")
+      .slice(0, 43);
+    rateLimitClientKeys.push(clientKey);
+    const increment = createPrismaRateLimitIncrement(db);
+    const firstInstance = createApplicationRateLimitGuard({ limit: 2, now: () => 1_800_000_000_000, increment });
+    const secondInstance = createApplicationRateLimitGuard({ limit: 2, now: () => 1_800_000_000_000, increment });
+    const signedRequest = new Request("https://crm.example/api/applications", {
+      headers: { "x-dr-nona-client-key": clientKey },
+    });
+
+    await expect(firstInstance(signedRequest)).resolves.toMatchObject({ allowed: true });
+    await expect(secondInstance(signedRequest)).resolves.toMatchObject({ allowed: true });
+    await expect(firstInstance(signedRequest)).resolves.toMatchObject({ allowed: false, reason: "limit" });
+    await expect(db.applicationRateLimitBucket.count({ where: { clientKey } })).resolves.toBe(1);
   }, 20_000);
 });

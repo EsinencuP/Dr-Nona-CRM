@@ -4,11 +4,12 @@ import { readContactEnvironment } from "../../server/config/contact-env";
 import { requestOriginIsAllowed } from "../../server/http/request-validation";
 
 describe("contact deployment environment", () => {
-  test("requires only the server-side Telegram credentials", () => {
+  test("requires the server-side Telegram credentials and proxy secret", () => {
     expect(
       readContactEnvironment({
         TELEGRAM_BOT_TOKEN: "test-token",
         TELEGRAM_CHAT_ID: "test-chat",
+        CONTACT_PROXY_SHARED_SECRET: "test-shared-secret",
       }),
     ).toEqual({
       success: true,
@@ -16,6 +17,7 @@ describe("contact deployment environment", () => {
         allowedOrigins: new Set(),
         telegramBotToken: "test-token",
         telegramChatId: "test-chat",
+        proxySharedSecret: "test-shared-secret",
       },
     });
   });
@@ -24,6 +26,7 @@ describe("contact deployment environment", () => {
     const result = readContactEnvironment({
       TELEGRAM_BOT_TOKEN: "test-token",
       TELEGRAM_CHAT_ID: "test-chat",
+      CONTACT_PROXY_SHARED_SECRET: "test-shared-secret",
       VERCEL_URL: "dr-nona-preview.vercel.app",
       VERCEL_BRANCH_URL: "dr-nona-git-main.vercel.app",
       VERCEL_PROJECT_PRODUCTION_URL: "dr-nona.md",
@@ -34,6 +37,15 @@ describe("contact deployment environment", () => {
     expect(result.value.allowedOrigins).toEqual(
       new Set(["https://dr-nona-preview.vercel.app", "https://dr-nona-git-main.vercel.app", "https://dr-nona.md"]),
     );
+  });
+
+  test("fails closed when the proxy secret is missing", () => {
+    expect(
+      readContactEnvironment({
+        TELEGRAM_BOT_TOKEN: "test-token",
+        TELEGRAM_CHAT_ID: "test-chat",
+      }),
+    ).toEqual({ success: false, missing: ["CONTACT_PROXY_SHARED_SECRET"] });
   });
 
   test("accepts the deployment's own origin without a hardcoded domain", () => {

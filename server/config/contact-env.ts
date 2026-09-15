@@ -2,6 +2,7 @@ export type ContactEnvironment = {
   allowedOrigins: Set<string>;
   telegramBotToken: string;
   telegramChatId: string;
+  proxySharedSecret: string;
   telegramWebhookSecret?: string;
 };
 
@@ -28,11 +29,12 @@ const normalizeVercelOrigin = (value: string | undefined) => {
 export function readContactEnvironment(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): ContactEnvironmentResult {
-  const required = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"] as const;
+  const required = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "CONTACT_PROXY_SHARED_SECRET"] as const;
   const missing = required.filter((key) => !environment[key]?.trim());
   if (missing.length) return { success: false, missing: [...missing] };
   const telegramBotToken = environment.TELEGRAM_BOT_TOKEN?.trim() ?? "";
   const telegramChatId = environment.TELEGRAM_CHAT_ID?.trim() ?? "";
+  const proxySharedSecret = environment.CONTACT_PROXY_SHARED_SECRET?.trim() ?? "";
 
   const allowedOrigins = new Set(
     [
@@ -49,6 +51,7 @@ export function readContactEnvironment(
       allowedOrigins,
       telegramBotToken,
       telegramChatId,
+      proxySharedSecret,
       telegramWebhookSecret: environment.TELEGRAM_WEBHOOK_SECRET?.trim() || undefined,
     },
   };

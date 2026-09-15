@@ -10,6 +10,7 @@ const environment: ContactEnvironment = {
   allowedOrigins: new Set(["https://example.test"]),
   telegramBotToken: "test-token",
   telegramChatId: "test-chat",
+  proxySharedSecret: "test-shared-secret-at-least-32-bytes",
 };
 const validBody = {
   locale: "ru-MD",
@@ -40,6 +41,7 @@ function handler(serviceResult: ApplicationServiceResult, overrides: Application
     environment: () => ({ success: true, value: environment }),
     process: vi.fn(async () => serviceResult),
     rateLimitGuard: async () => true,
+    verifyProxy: async () => ({ valid: true, clientKey: "a".repeat(43) }),
     ...overrides,
   });
 }
@@ -213,10 +215,55 @@ describe("POST /api/applications", () => {
     expect(response.headers.get("Retry-After")).toBe("60");
   });
 
+  test("returns 503 instead of a false quota response when the distributed store is unavailable", async () => {
+    const response = await handler(
+      {
+        requestId: "unused",
+        type: "order",
+        delivery: { telegram: "sent" },
+        outcome: "success",
+      },
+      { rateLimitGuard: async () => ({ allowed: false, retryAfterSeconds: 30, reason: "store_unavailable" }) },
+    )(request());
+    expect(response.status).toBe(503);
+    expect(response.headers.get("Retry-After")).toBe("30");
+  });
+
+  test("rejects an unauthenticated proxy request before rate or application processing", async () => {
+    const process = vi.fn();
+    const rateLimitGuard = vi.fn();
+    const logger = vi.fn();
+    const response = await handler(
+      {
+        requestId: "unused",
+        type: "order",
+        delivery: { telegram: "sent" },
+        outcome: "success",
+      },
+      {
+        process,
+        rateLimitGuard,
+        logger,
+        verifyProxy: async () => ({ valid: false, reason: "signature" }),
+      },
+    )(request());
+
+    expect(response.status).toBe(403);
+    expect(process).not.toHaveBeenCalled();
+    expect(rateLimitGuard).not.toHaveBeenCalled();
+    expect(logger).toHaveBeenCalledWith({ event: "application.proxy.rejected", reason: "signature" });
+  });
+
   test("limits one client to five application attempts per minute", async () => {
     let now = 1_000;
+    const attempts = new Map<string, number>();
     const rateLimitGuard = createApplicationRateLimitGuard({
       now: () => now,
+      increment: async ({ id }) => {
+        const next = (attempts.get(id) ?? 0) + 1;
+        attempts.set(id, next);
+        return next;
+      },
     });
     const process = vi.fn(async () => ({
       requestId: "request-limited",
@@ -228,10 +275,11 @@ describe("POST /api/applications", () => {
       environment: () => ({ success: true, value: environment }),
       process,
       rateLimitGuard,
+      verifyProxy: async () => ({ valid: true, clientKey: "a".repeat(43) }),
     });
     const clientRequest = () =>
       request(validBody, {
-        headers: { "x-vercel-forwarded-for": "203.0.113.20" },
+        headers: { "x-dr-nona-client-key": "a".repeat(43) },
       });
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -239,11 +287,44 @@ describe("POST /api/applications", () => {
     }
     const limited = await limitedHandler(clientRequest());
     expect(limited.status).toBe(429);
-    expect(limited.headers.get("Retry-After")).toBe("60");
+    expect(limited.headers.get("Retry-After")).toBe("59");
     expect(process).toHaveBeenCalledTimes(5);
 
     now += 60_000;
     expect((await limitedHandler(clientRequest())).status).toBe(201);
+  });
+
+  test("shares one persistent counter across independent serverless guard instances", async () => {
+    const attempts = new Map<string, number>();
+    const increment = async ({ id }: { id: string }) => {
+      const next = (attempts.get(id) ?? 0) + 1;
+      attempts.set(id, next);
+      return next;
+    };
+    const firstInstance = createApplicationRateLimitGuard({ limit: 2, now: () => 10_000, increment });
+    const secondInstance = createApplicationRateLimitGuard({ limit: 2, now: () => 10_000, increment });
+    const signedRequest = request(validBody, { headers: { "x-dr-nona-client-key": "b".repeat(43) } });
+
+    await expect(firstInstance(signedRequest)).resolves.toMatchObject({ allowed: true });
+    await expect(secondInstance(signedRequest)).resolves.toMatchObject({ allowed: true });
+    await expect(firstInstance(signedRequest)).resolves.toMatchObject({ allowed: false, reason: "limit" });
+  });
+
+  test("fails closed when trusted identity or the persistent rate store is unavailable", async () => {
+    const missingIdentity = createApplicationRateLimitGuard({ increment: async () => 1 });
+    await expect(missingIdentity(request())).resolves.toMatchObject({
+      allowed: false,
+      reason: "identity_unavailable",
+    });
+
+    const unavailableStore = createApplicationRateLimitGuard({
+      increment: async () => {
+        throw new Error("store unavailable");
+      },
+    });
+    await expect(
+      unavailableStore(request(validBody, { headers: { "x-dr-nona-client-key": "c".repeat(43) } })),
+    ).resolves.toMatchObject({ allowed: false, reason: "store_unavailable" });
   });
 
   test("metadata-only logs never include PII", async () => {
