@@ -7,6 +7,7 @@ import { getResultsData } from "../../../../server/analytics/results-service";
 import { PageHeader } from "../_components/page-header";
 import { KpiGrid } from "./components/kpi-grid";
 import { LogisticsForecastTable } from "./components/logistics-forecast-table";
+import { OperationalIntelligence } from "./components/operational-intelligence";
 import { PeriodFilter } from "./components/period-filter";
 import { PromotionAdviceCards } from "./components/promotion-advice-cards";
 import { RegionDistributionCard } from "./components/region-distribution-card";
@@ -28,6 +29,12 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
         description="Завершённые товарные заказы, фиксированные цены и планирование поставок. Сравнение с предыдущим равным периодом."
       />
       <PeriodFilter period={period} />
+      {data.demoOrdersInComparison > 0 && (
+        <div role="status" className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-blue-950 text-sm">
+          <strong>В сравнении есть демонстрационные заказы.</strong> {data.demoOrdersInComparison} записей созданы
+          тестовым seed и включены в показанные расчёты. Эти показатели не подтверждают реальные продажи или спрос.
+        </div>
+      )}
       <p className="mb-4 text-muted-foreground text-xs">
         {date.format(new Date(data.start))} — {date.format(new Date(data.end))} · Кишинёв · Завершённых заказов:{" "}
         {data.current.orders}
@@ -83,6 +90,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
       <PromotionAdviceCards recommendations={data.recommendations} />
       <LogisticsForecastTable skus={data.skus} />
       <RegionDistributionCard regions={data.regions} />
+      <OperationalIntelligence data={data.operations} />
     </>
   );
 }

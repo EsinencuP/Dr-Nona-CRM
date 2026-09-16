@@ -179,7 +179,7 @@ describe("results service boundary", () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     mocks.access.mockResolvedValue(undefined);
-    mocks.transaction.mockResolvedValue([[], []]);
+    mocks.transaction.mockResolvedValue([[], [], []]);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -201,6 +201,10 @@ describe("results service boundary", () => {
       },
     });
     expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Array), { isolationLevel: "RepeatableRead" });
+    expect(mocks.findOrders).toHaveBeenCalledWith({
+      where: { type: "order", createdAt: { gte: new Date(now.getTime() - 60 * day), lt: now } },
+      select: { id: true, createdAt: true, status: true, firstActionAt: true, submittedRegion: true },
+    });
   });
 
   test("rejects unauthorized access without querying the database", async () => {
@@ -208,6 +212,32 @@ describe("results service boundary", () => {
     await expect(getResultsData("1y")).rejects.toThrow("Unauthorized");
     expect(mocks.findOrders).not.toHaveBeenCalled();
     expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  test("flags demonstration orders so calculations cannot be mistaken for real demand", async () => {
+    mocks.transaction.mockResolvedValueOnce([
+      [],
+      [],
+      [
+        {
+          id: "demo-analytics-order-01",
+          createdAt: order(1).createdAt,
+          status: "DONE",
+          firstActionAt: null,
+          submittedRegion: "Кишинёв",
+        },
+        {
+          id: "real-order",
+          createdAt: order(2).createdAt,
+          status: "NEW",
+          firstActionAt: null,
+          submittedRegion: "Бельцы",
+        },
+      ],
+    ]);
+    const data = await getResultsData("1m");
+    expect(data.demoOrdersInComparison).toBe(1);
+    expect(data.operations.current.applications).toBe(2);
   });
 
   test("database failure is not represented as zero sales", async () => {
