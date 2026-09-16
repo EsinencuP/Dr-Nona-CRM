@@ -42,6 +42,24 @@ model ClientProfileAudit {
   @@index([clientId, createdAt])
 }
 
+model ReportExportAudit {
+  id          String   @id @default(uuid())
+  actor       String
+  report      String
+  columns     Json
+  fromDate    DateTime?
+  toDate      DateTime?
+  includeDemo Boolean  @default(false)
+  outcome     String
+  rowCount    Int?
+  fileBytes   Int?
+  errorCode   String?
+  createdAt   DateTime @default(now())
+
+  @@index([actor, createdAt])
+  @@index([createdAt])
+}
+
 enum OrderType {
   order
   consultation

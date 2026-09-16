@@ -10,6 +10,7 @@ import { statusLabels, typeLabels } from "@/lib/crm-labels";
 import { ORDER_STATUSES, ORDER_TYPES } from "@/lib/crm-types";
 import { cn } from "@/lib/utils";
 
+import { ExportDialog } from "../_components/export-dialog";
 import { PageHeader } from "../_components/page-header";
 import { getOrderRegions, getOrders } from "../actions";
 import { OrdersTable } from "./_components/orders-table";
@@ -61,6 +62,10 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
           <p className="font-extrabold text-xl tabular-nums">{result.total}</p>
         </div>
       </PageHeader>
+
+      <div className="mb-4">
+        <ExportDialog initialReport="orders" />
+      </div>
 
       <nav className="mb-3 flex gap-1 overflow-x-auto rounded-xl border bg-white p-1" aria-label="Фильтр по статусу">
         <Link

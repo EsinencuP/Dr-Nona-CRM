@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+import { ExportDialog } from "../_components/export-dialog";
 import { PageHeader } from "../_components/page-header";
 import { getClients } from "../actions";
 import { ClientsTable } from "./_components/clients-table";
@@ -26,6 +27,9 @@ export default async function ClientsPage({ searchParams }: { searchParams: Prom
           <p className="font-extrabold text-xl">{clients.length}</p>
         </div>
       </PageHeader>
+      <div className="mb-4">
+        <ExportDialog initialReport="clients" />
+      </div>
       <form action="/clients" className="mb-4 flex max-w-xl gap-2 rounded-xl border bg-white p-3">
         <label className="relative min-w-0 flex-1" htmlFor="clients-search">
           <span className="sr-only">Поиск клиента</span>

@@ -10,7 +10,11 @@ const privateResponseHeaders = {
 };
 
 export function proxy(request: NextRequest) {
-  if (isPublicCrmApiPath(request.nextUrl.pathname)) {
+  if (
+    isPublicCrmApiPath(request.nextUrl.pathname) ||
+    request.nextUrl.pathname === "/api/internal/popularity-candidate"
+  ) {
+    // The popularity endpoint performs its own narrowly scoped bearer-token check.
     return NextResponse.next();
   }
 

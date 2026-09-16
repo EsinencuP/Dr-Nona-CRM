@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 
 import { parseResultsPeriod } from "../../../../server/analytics/results-calculations";
 import { getResultsData } from "../../../../server/analytics/results-service";
+import { ExportDialog } from "../_components/export-dialog";
 import { PageHeader } from "../_components/page-header";
 import { KpiGrid } from "./components/kpi-grid";
 import { LogisticsForecastTable } from "./components/logistics-forecast-table";
@@ -28,6 +29,9 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
         title="Результаты"
         description="Завершённые товарные заказы, фиксированные цены и планирование поставок. Сравнение с предыдущим равным периодом."
       />
+      <div className="mb-4">
+        <ExportDialog initialReport="products" />
+      </div>
       <PeriodFilter period={period} />
       {data.demoOrdersInComparison > 0 && (
         <div role="status" className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-blue-950 text-sm">
