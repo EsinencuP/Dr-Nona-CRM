@@ -35,6 +35,8 @@ export type DbWriteInput = {
   utmContent?: string;
   entryPoint?: string;
   sessionHistory?: string;
+  attribution?: Prisma.InputJsonValue;
+  telegramPayload: string;
   products?: Array<{
     slug: string;
     quantity: number;
@@ -125,6 +127,7 @@ export async function saveApplicationToDb(
           utmContent: input.utmContent ?? null,
           entryPoint: input.entryPoint ?? null,
           sessionHistory: input.sessionHistory ?? null,
+          attribution: input.attribution ?? Prisma.JsonNull,
           ...(input.products?.length
             ? {
                 items: {
@@ -150,6 +153,12 @@ export async function saveApplicationToDb(
           },
         });
       }
+      await transaction.telegramOutbox.create({
+        data: {
+          orderId: createdOrder.id,
+          payload: input.telegramPayload,
+        },
+      });
       return createdOrder;
     });
 
@@ -173,18 +182,24 @@ export async function saveApplicationToDb(
         if (existing.state === ApplicationSubmissionState.DELIVERY_STARTED) {
           return { success: true, orderId: existing.requestId, disposition: "in_progress" };
         }
-        const acquired = await db.applicationSubmission.updateMany({
-          where: {
-            keyHash: idempotency.keyHash,
-            payloadHash: idempotency.payloadHash,
-            state: ApplicationSubmissionState.DELIVERY_FAILED,
-          },
-          data: {
-            state: ApplicationSubmissionState.DELIVERY_STARTED,
-            lastErrorCode: null,
-            expiresAt: idempotency.expiresAt,
-          },
-        });
+        const [acquired] = await db.$transaction([
+          db.applicationSubmission.updateMany({
+            where: {
+              keyHash: idempotency.keyHash,
+              payloadHash: idempotency.payloadHash,
+              state: ApplicationSubmissionState.DELIVERY_FAILED,
+            },
+            data: {
+              state: ApplicationSubmissionState.DELIVERY_STARTED,
+              lastErrorCode: null,
+              expiresAt: idempotency.expiresAt,
+            },
+          }),
+          db.telegramOutbox.updateMany({
+            where: { orderId: existing.requestId, state: { in: ["TERMINAL", "NEEDS_REVIEW", "CANCELLED"] } },
+            data: { state: "PENDING", attempts: 0, nextAttemptAt: idempotency.now, lastErrorCode: null },
+          }),
+        ]);
         return acquired.count === 1
           ? { success: true, orderId: existing.requestId, disposition: "retry" }
           : { success: true, orderId: existing.requestId, disposition: "in_progress" };
@@ -211,6 +226,15 @@ export async function completeApplicationDelivery(
           lastErrorCode: null,
         },
       }),
+      db.telegramOutbox.updateMany({
+        where: { orderId },
+        data: {
+          state: "DELIVERED",
+          providerMessageId: telegramMessageId,
+          lastErrorCode: null,
+          lockedAt: null,
+        },
+      }),
     ]);
     return true;
   } catch (error) {
@@ -228,10 +252,16 @@ export async function markApplicationDeliveryFailed(
   db: PrismaClient = getDbClient(),
 ): Promise<boolean> {
   try {
-    const result = await db.applicationSubmission.updateMany({
-      where: { requestId: orderId, state: ApplicationSubmissionState.DELIVERY_STARTED },
-      data: { state: ApplicationSubmissionState.DELIVERY_FAILED, lastErrorCode: errorCode.slice(0, 100) },
-    });
+    const [result] = await db.$transaction([
+      db.applicationSubmission.updateMany({
+        where: { requestId: orderId, state: ApplicationSubmissionState.DELIVERY_STARTED },
+        data: { state: ApplicationSubmissionState.DELIVERY_FAILED, lastErrorCode: errorCode.slice(0, 100) },
+      }),
+      db.telegramOutbox.updateMany({
+        where: { orderId },
+        data: { state: "TERMINAL", lastErrorCode: errorCode.slice(0, 100), lockedAt: null },
+      }),
+    ]);
     return result.count === 1;
   } catch (error) {
     console.error("[applications.db] Delivery failure state update failed", {
@@ -265,19 +295,15 @@ export async function updateOrderStatusByTelegramMessageId(
   status: OrderStatus,
   db: PrismaClient = getDbClient(),
 ): Promise<boolean> {
-  try {
-    const order = await db.order.findUnique({
-      where: { telegramMessageId },
-    });
-    if (!order) return false;
-
-    await db.order.update({
-      where: { id: order.id },
-      data: { status },
-    });
-    return true;
-  } catch (error) {
-    console.error("[applications.db] Status update failed", databaseFailureMetadata(error));
-    return false;
-  }
+  const { transitionOrderStatus, transitionSucceeded } = await import("../orders/order-status-service");
+  const result = await transitionOrderStatus(
+    {
+      telegramMessageId,
+      nextStatus: status,
+      source: "telegram_reply",
+      actorKey: "telegram:legacy",
+    },
+    db,
+  );
+  return transitionSucceeded(result);
 }

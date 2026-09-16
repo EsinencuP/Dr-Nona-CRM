@@ -33,14 +33,15 @@ export function ApplicationHealthCard({ health }: { health: ApplicationHealth })
           ) : (
             <p className="mt-2 text-sm leading-6">
               Сбоев Telegram: {health.deliveryFailures}; зависших доставок: {health.staleDeliveries}; подряд:{" "}
-              {health.consecutiveFailures}. Алерт включается при {health.failureThreshold} последовательных сбоях или
-              одной доставке старше 2 минут.
+              {health.consecutiveFailures}; ожидают повтора: {health.pendingRetries}; требуют сверки:{" "}
+              {health.needsReview}. Алерт включается для terminal/review или отправки в состоянии SENDING старше 5
+              минут.
             </p>
           )}
           {attention && (
             <p className="mt-2 text-xs leading-5 opacity-80">
-              Найдите requestId в логах Vercel. Повторяйте только DELIVERY_FAILED; DELIVERY_STARTED сначала сверяйте с
-              Telegram, чтобы не создать дубль.
+              Откройте заявку: TERMINAL можно повторить, NEEDS_REVIEW сначала сверьте с Telegram, чтобы не создать
+              дубль.
             </p>
           )}
         </div>

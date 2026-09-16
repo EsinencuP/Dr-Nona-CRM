@@ -90,6 +90,10 @@ model Order {
   // Behavior analytics
   entryPoint          String?                  // URL of the page where form was submitted
   sessionHistory      String?                  // JSON string: ["slug1", "slug2"] — product views before order
+  attribution         Json?                    // Versioned, normalized analytics context; never used for authorization
+
+  // First valid transition away from NEW. Historical rows are intentionally left null.
+  firstActionAt       DateTime?
 
   // Telegram sync — needed to update status when manager replies
   telegramMessageId   String?  @unique         // message_id returned by Telegram sendMessage API
@@ -100,11 +104,73 @@ model Order {
   client              Client   @relation(fields: [clientId], references: [id])
   items               OrderItem[]
   applicationSubmission ApplicationSubmission?
+  telegramOutbox      TelegramOutbox?
+  statusAudits        OrderStatusAudit[]
+  telegramCommandAudits TelegramCommandAudit[]
 
   @@index([clientId])                          // Fast lookup of all orders by one client
   @@index([createdAt])                         // For time-range queries (seasonality reports)
   @@index([status, createdAt])                 // For CRM list: filter by status + sort by date
   @@index([utmSource])                         // For marketing channel performance reports
+}
+
+model OrderStatusAudit {
+  id         String      @id @default(uuid())
+  orderId    String
+  fromStatus OrderStatus
+  toStatus   OrderStatus
+  source     String
+  actorKey   String
+  createdAt  DateTime    @default(now())
+
+  order      Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@index([createdAt])
+}
+
+enum TelegramOutboxState {
+  PENDING
+  SENDING
+  DELIVERED
+  NEEDS_REVIEW
+  TERMINAL
+  CANCELLED
+}
+
+model TelegramOutbox {
+  orderId           String              @id
+  payload           String
+  state             TelegramOutboxState @default(PENDING)
+  attempts          Int                 @default(0)
+  nextAttemptAt     DateTime            @default(now())
+  lockedAt          DateTime?
+  lastAttemptAt     DateTime?
+  lastErrorCode     String?
+  providerMessageId String?             @unique
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  order             Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([state, nextAttemptAt])
+  @@index([updatedAt])
+}
+
+model TelegramCommandAudit {
+  id        String   @id @default(uuid())
+  updateId  String   @unique
+  actorKey  String
+  command   String
+  outcome   String
+  orderId   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order     Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([actorKey, createdAt])
+  @@index([orderId, createdAt])
 }
 
 enum ApplicationSubmissionState {

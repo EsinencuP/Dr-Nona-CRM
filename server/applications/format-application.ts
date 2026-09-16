@@ -14,6 +14,10 @@ export const ALL_STATUS_LINES = [
   STATUS_CANCELLED,
 ] as const;
 
+export function formatOrderReference(orderId: string) {
+  return `order:${orderId}`;
+}
+
 /**
  * Replace the status line in a Telegram message.
  * Returns `null` when the target status line is not found.
@@ -65,6 +69,7 @@ export function formatTelegramApplication(record: ApplicationRecord) {
   ];
   const footer = [
     `ID заявки: ${record.requestId}`,
+    `Ref: ${formatOrderReference(record.requestId)}`,
     `Получено: ${formatDateTimeInChisinau(record.submittedAt)}`,
     "Источник: сайт Dr. Nona Moldova",
   ];

@@ -12,6 +12,7 @@ const env = {
   botToken: "test-bot-token",
   webhookSecret: "test-secret-123",
   chatId: "-100123",
+  managerUserIds: new Set(["777"]),
 };
 
 const makeRequest = (
@@ -73,6 +74,7 @@ describe("parseManagerStatusCommand", () => {
     ["почта", "DELIVERY"],
     ["delivery", "DELIVERY"],
     ["shipped", "DELIVERY"],
+    ["/status processing", "PROCESSING"],
   ] as const)("maps '%s' to %s", (command, status) => {
     expect(parseManagerStatusCommand(`  ${command}  `)).toBe(status);
   });
@@ -102,7 +104,12 @@ describe("POST /api/telegram-webhook", () => {
 
   test("returns 503 when the configured Telegram chat is missing", async () => {
     const handler = createTelegramWebhookHandler({
-      getEnvironment: () => ({ botToken: env.botToken, webhookSecret: env.webhookSecret, chatId: "" }),
+      getEnvironment: () => ({
+        botToken: env.botToken,
+        webhookSecret: env.webhookSecret,
+        chatId: "",
+        managerUserIds: env.managerUserIds,
+      }),
     });
     const response = await handler(makeRequest(replyUpdate("готово")));
     expect(response.status).toBe(503);
@@ -170,10 +177,10 @@ describe("POST /api/telegram-webhook", () => {
     expect(JSON.stringify(logger.mock.calls)).not.toContain("-100999");
   });
 
-  test("ignores unknown commands and bot messages without a status line", async () => {
+  test("ignores unknown commands but accepts an edited card without a status line", async () => {
     const editMessage = vi.fn();
     const deleteMessage = vi.fn();
-    const updateOrderStatus = vi.fn();
+    const updateOrderStatus = vi.fn(async () => true);
     const handler = createTelegramWebhookHandler({
       getEnvironment: () => env,
       editMessage,
@@ -182,7 +189,7 @@ describe("POST /api/telegram-webhook", () => {
     });
 
     const unknownResponse = await handler(makeRequest(replyUpdate("вопрос по заявке")));
-    const unrelatedMessage = replyUpdate("готово");
+    const unrelatedMessage = replyUpdate("беру");
     if (unrelatedMessage.message?.reply_to_message) {
       unrelatedMessage.message.reply_to_message.text = "Служебное сообщение";
     }
@@ -190,9 +197,12 @@ describe("POST /api/telegram-webhook", () => {
 
     expect(unknownResponse.status).toBe(200);
     expect(unrelatedResponse.status).toBe(200);
-    expect(updateOrderStatus).not.toHaveBeenCalled();
-    expect(editMessage).not.toHaveBeenCalled();
-    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(updateOrderStatus).toHaveBeenCalledOnce();
+    expect(updateOrderStatus).toHaveBeenCalledWith("39", "PROCESSING", expect.any(String));
+    expect(editMessage).toHaveBeenCalledWith(-100123, 39, `Служебное сообщение\n\n${STATUS_PROCESSING}`, {
+      botToken: "test-bot-token",
+    });
+    expect(deleteMessage).toHaveBeenCalledTimes(1);
   });
 
   test.each([
@@ -216,7 +226,7 @@ describe("POST /api/telegram-webhook", () => {
       const response = await handler(makeRequest(replyUpdate(command, currentStatusLine)));
 
       expect(response.status).toBe(200);
-      expect(updateOrderStatus).toHaveBeenCalledWith("39", status);
+      expect(updateOrderStatus).toHaveBeenCalledWith("39", status, expect.any(String));
       expect(editMessage).toHaveBeenCalledWith(-100123, 39, `🛒 НОВЫЙ ЗАКАЗ\nИмя: Test\n\n${nextStatusLine}`, {
         botToken: "test-bot-token",
       });
@@ -228,9 +238,8 @@ describe("POST /api/telegram-webhook", () => {
       expect(logger).toHaveBeenCalledWith(
         expect.objectContaining({
           event: "webhook.status_update",
-          originalMessageId: 39,
           newStatus: status,
-          databaseUpdated: true,
+          outcome: "updated",
         }),
       );
       expect(JSON.stringify(logger.mock.calls)).not.toMatch(/Manager|-100123/u);
@@ -256,7 +265,7 @@ describe("POST /api/telegram-webhook", () => {
       const response = await handler(makeRequest(replyUpdate(command, currentStatusLine)));
 
       expect(response.status).toBe(200);
-      expect(updateOrderStatus).toHaveBeenCalledWith("39", status);
+      expect(updateOrderStatus).toHaveBeenCalledWith("39", status, expect.any(String));
       expect(editMessage).not.toHaveBeenCalled();
       expect(deleteMessage).toHaveBeenCalledTimes(2);
       expect(deleteMessage).toHaveBeenNthCalledWith(1, -100123, 39, {
@@ -308,5 +317,77 @@ describe("POST /api/telegram-webhook", () => {
     }
 
     expect(observedStatuses).toEqual(["PROCESSING", "DELIVERY", "DONE", "CANCELLED"]);
+  });
+
+  test("rejects an unauthorized sender without data or mutation", async () => {
+    const updateOrderStatus = vi.fn(async () => true);
+    const sendText = vi.fn();
+    const update = replyUpdate("беру");
+    if (update.message?.from) update.message.from.id = 888;
+    const handler = createTelegramWebhookHandler({
+      getEnvironment: () => env,
+      updateOrderStatus,
+      sendText,
+    });
+
+    await handler(makeRequest(update));
+
+    expect(updateOrderStatus).not.toHaveBeenCalled();
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  test("deduplicates a repeated Telegram update before mutation", async () => {
+    const updateOrderStatus = vi.fn(async () => true);
+    const handler = createTelegramWebhookHandler({
+      getEnvironment: () => env,
+      updateOrderStatus,
+      reserveCommand: vi.fn(async () => false),
+    });
+
+    await handler(makeRequest(replyUpdate("беру")));
+
+    expect(updateOrderStatus).not.toHaveBeenCalled();
+  });
+
+  test("serves only redacted manager summaries for the approved command set", async () => {
+    const sendText = vi.fn(async () => undefined);
+    const getOrderSummary = vi.fn(async () => "Заявка #550e8400-e29b-41d4-a716-446655440000\nСтатус: NEW");
+    const handler = createTelegramWebhookHandler({
+      getEnvironment: () => env,
+      updateOrderStatus: vi.fn(async () => true),
+      sendText,
+      getOrderSummary,
+    });
+    const update = replyUpdate("/order 550e8400-e29b-41d4-a716-446655440000");
+
+    await handler(makeRequest(update));
+
+    expect(getOrderSummary).toHaveBeenCalledWith("550e8400-e29b-41d4-a716-446655440000");
+    expect(sendText).toHaveBeenCalledWith(expect.stringContaining("Статус: NEW"), env);
+    expect(JSON.stringify(sendText.mock.calls)).not.toMatch(/Ana|069|example\.test/u);
+  });
+
+  test("does not edit Telegram presentation when the lifecycle transition is illegal", async () => {
+    const editMessage = vi.fn();
+    const deleteMessage = vi.fn();
+    const sendText = vi.fn(async () => undefined);
+    const handler = createTelegramWebhookHandler({
+      getEnvironment: () => env,
+      editMessage,
+      deleteMessage,
+      sendText,
+      updateOrderStatus: vi.fn(async () => ({
+        outcome: "invalid_transition" as const,
+        orderId: "550e8400-e29b-41d4-a716-446655440000",
+        previousStatus: "DONE" as const,
+        status: "PROCESSING" as const,
+      })),
+    });
+
+    await handler(makeRequest(replyUpdate("беру", STATUS_DELIVERY)));
+
+    expect(editMessage).not.toHaveBeenCalled();
+    expect(deleteMessage).not.toHaveBeenCalled();
+    expect(sendText).toHaveBeenCalledWith("Этот переход статуса запрещён.", env);
   });
 });

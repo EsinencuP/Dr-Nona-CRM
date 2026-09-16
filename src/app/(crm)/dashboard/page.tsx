@@ -14,6 +14,7 @@ import { OrdersRevenueChart } from "./_components/orders-revenue-chart";
 import { PeakHoursChart } from "./_components/peak-hours-chart";
 import { RecentOrdersFeed } from "./_components/recent-orders-feed";
 import { RegionsChart } from "./_components/regions-chart";
+import { SlaCard } from "./_components/sla-card";
 import { SourcesDonutChart } from "./_components/sources-donut-chart";
 import { StatusPill } from "./_components/status-pill";
 import { TopProductsTable } from "./_components/top-products-table";
@@ -39,6 +40,7 @@ export default async function DashboardPage({
       <DashboardHeader range={range} asOf={stats.asOf} />
       <div id="dashboard-panel" role="tabpanel" aria-labelledby={`range-${range}`} className="space-y-5">
         <ApplicationHealthCard health={applicationHealth} />
+        <SlaCard operations={stats.operations} />
         {incomplete && (
           <p role="status" className="rounded-xl border border-slate-200 bg-white p-4 text-slate-500 text-sm leading-6">
             Цены для некоторых товаров не заданы — выручка может быть занижена. Без розничных снимков:{" "}

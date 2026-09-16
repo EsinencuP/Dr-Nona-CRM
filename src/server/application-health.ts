@@ -1,16 +1,16 @@
-import { ApplicationSubmissionState } from "@prisma/client";
+import { TelegramOutboxState } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
 
 import { requireCrmAccess } from "./crm-auth";
 
 const HEALTH_WINDOW_MINUTES = 15;
-const STALE_DELIVERY_MINUTES = 2;
-const FAILURE_ALERT_THRESHOLD = 3;
+const STALE_DELIVERY_MINUTES = 5;
+const FAILURE_ALERT_THRESHOLD = 1;
 
 export type ApplicationDeliveryRecord = {
-  requestId: string;
-  state: ApplicationSubmissionState;
+  orderId: string;
+  state: TelegramOutboxState;
   updatedAt: Date;
   lastErrorCode: string | null;
 };
@@ -22,6 +22,8 @@ export type ApplicationHealth = {
   failureThreshold: number;
   deliveryFailures: number | null;
   staleDeliveries: number | null;
+  pendingRetries: number | null;
+  needsReview: number | null;
   consecutiveFailures: number | null;
   checkedAt: string;
 };
@@ -32,30 +34,32 @@ export function summarizeApplicationHealth(
 ): Omit<ApplicationHealth, "database" | "checkedAt"> {
   const staleBefore = now.getTime() - STALE_DELIVERY_MINUTES * 60_000;
   const recent = [...records].sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
-  const deliveryFailures = recent.filter(
-    (record) => record.state === ApplicationSubmissionState.DELIVERY_FAILED,
-  ).length;
+  const deliveryFailures = recent.filter((record) => record.state === TelegramOutboxState.TERMINAL).length;
+  const needsReview = recent.filter((record) => record.state === TelegramOutboxState.NEEDS_REVIEW).length;
+  const pendingRetries = recent.filter((record) => record.state === TelegramOutboxState.PENDING).length;
   const staleDeliveries = recent.filter(
-    (record) =>
-      record.state === ApplicationSubmissionState.DELIVERY_STARTED && record.updatedAt.getTime() <= staleBefore,
+    (record) => record.state === TelegramOutboxState.SENDING && record.updatedAt.getTime() <= staleBefore,
   ).length;
   let consecutiveFailures = 0;
   for (const record of recent) {
-    if (record.state === ApplicationSubmissionState.DELIVERED) break;
+    if (record.state === TelegramOutboxState.DELIVERED) break;
     if (
-      record.state === ApplicationSubmissionState.DELIVERY_FAILED ||
-      (record.state === ApplicationSubmissionState.DELIVERY_STARTED && record.updatedAt.getTime() <= staleBefore)
+      record.state === TelegramOutboxState.TERMINAL ||
+      record.state === TelegramOutboxState.NEEDS_REVIEW ||
+      (record.state === TelegramOutboxState.SENDING && record.updatedAt.getTime() <= staleBefore)
     ) {
       consecutiveFailures += 1;
     }
   }
 
   return {
-    status: consecutiveFailures >= FAILURE_ALERT_THRESHOLD || staleDeliveries > 0 ? "attention" : "healthy",
+    status: deliveryFailures > 0 || needsReview > 0 || staleDeliveries > 0 ? "attention" : "healthy",
     windowMinutes: HEALTH_WINDOW_MINUTES,
     failureThreshold: FAILURE_ALERT_THRESHOLD,
     deliveryFailures,
     staleDeliveries,
+    pendingRetries,
+    needsReview,
     consecutiveFailures,
   };
 }
@@ -67,16 +71,16 @@ type HealthDependencies = {
 };
 
 async function findApplicationDeliveryRecords(windowStart: Date, staleBefore: Date) {
-  return prisma.applicationSubmission.findMany({
+  return prisma.telegramOutbox.findMany({
     where: {
       OR: [
         { updatedAt: { gte: windowStart } },
-        { state: ApplicationSubmissionState.DELIVERY_STARTED, updatedAt: { lte: staleBefore } },
+        { state: TelegramOutboxState.SENDING, updatedAt: { lte: staleBefore } },
       ],
     },
-    orderBy: [{ updatedAt: "desc" }, { requestId: "desc" }],
+    orderBy: [{ updatedAt: "desc" }, { orderId: "desc" }],
     take: 100,
-    select: { requestId: true, state: true, updatedAt: true, lastErrorCode: true },
+    select: { orderId: true, state: true, updatedAt: true, lastErrorCode: true },
   });
 }
 
@@ -101,6 +105,8 @@ export function createGetApplicationHealth(dependencies: HealthDependencies = {}
         failureThreshold: FAILURE_ALERT_THRESHOLD,
         deliveryFailures: null,
         staleDeliveries: null,
+        pendingRetries: null,
+        needsReview: null,
         consecutiveFailures: null,
         checkedAt: now.toISOString(),
       };

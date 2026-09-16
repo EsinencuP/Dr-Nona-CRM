@@ -20,8 +20,16 @@ import { getProductName, products } from "@/lib/products";
 import { requireCrmAccess } from "@/server/crm-auth";
 
 import { deleteOrderFromDb } from "../../../server/applications/application-db";
+import { sendTelegramApplication } from "../../../server/applications/providers/telegram-provider";
+import {
+  cancelTelegramOutbox,
+  deliverTelegramOutbox,
+  rearmTelegramOutbox,
+} from "../../../server/applications/telegram-outbox";
 import { fixedPriceSchema } from "../../../server/catalog/fixed-prices";
 import { updateCanonicalClientProfile } from "../../../server/clients/client-profile";
+import { CRM_SLA_MINUTES, CRM_TIMEZONE, getSlaWindows, slaAgeMinutes } from "../../../server/operations/sla-policy";
+import { transitionOrderStatus } from "../../../server/orders/order-status-service";
 import { normalizePhone } from "../../../shared/applications/application-schema";
 import { MOLDOVA_REGIONS } from "../../../shared/constants/moldova-regions";
 import { aggregateDashboard, normalizeRange, startDateForRange } from "./dashboard/_components/dashboard-data";
@@ -66,51 +74,62 @@ export async function getDashboardStats(requestedRange: DashboardRange): Promise
   const now = new Date();
   const start = startDateForRange(range, now);
   const previousStart = start ? new Date(2 * start.getTime() - now.getTime()) : undefined;
+  const { todayStart, weekStart, overdueBefore } = getSlaWindows(now);
   const statusQuery = prisma.order.groupBy({
     by: ["status"],
     orderBy: { status: "asc" },
     where: { createdAt: { lt: now } },
     _count: { _all: true },
   });
-  const [orders, statuses, newClients, previousNewClients, recent] = await prisma.$transaction(
-    [
-      prisma.order.findMany({
-        where: { createdAt: { gte: previousStart, lt: now } },
-        select: {
-          createdAt: true,
-          status: true,
-          type: true,
-          utmSource: true,
-          client: { select: { region: true } },
-          items: {
-            select: {
-              productSlug: true,
-              quantity: true,
-              retailPriceAtPurchase: true,
-              distributorPriceAtPurchase: true,
+  const [orders, statuses, newClients, previousNewClients, recent, todayCount, weekCount, overdueCount, oldestOverdue] =
+    await prisma.$transaction(
+      [
+        prisma.order.findMany({
+          where: { createdAt: { gte: previousStart, lt: now } },
+          select: {
+            createdAt: true,
+            status: true,
+            type: true,
+            utmSource: true,
+            client: { select: { region: true } },
+            items: {
+              select: {
+                productSlug: true,
+                quantity: true,
+                retailPriceAtPurchase: true,
+                distributorPriceAtPurchase: true,
+              },
             },
           },
-        },
-      }),
-      statusQuery,
-      prisma.client.count({ where: { createdAt: { gte: start, lt: now } } }),
-      prisma.client.count({ where: { createdAt: { gte: previousStart, lt: start ?? new Date(0) } } }),
-      prisma.order.findMany({
-        where: { createdAt: { gte: start, lt: now } },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        take: 8,
-        select: {
-          id: true,
-          type: true,
-          status: true,
-          createdAt: true,
-          client: { select: { firstName: true, lastName: true } },
-          items: { select: { productSlug: true } },
-        },
-      }),
-    ],
-    { isolationLevel: "RepeatableRead" },
-  );
+        }),
+        statusQuery,
+        prisma.client.count({ where: { createdAt: { gte: start, lt: now } } }),
+        prisma.client.count({ where: { createdAt: { gte: previousStart, lt: start ?? new Date(0) } } }),
+        prisma.order.findMany({
+          where: { createdAt: { gte: start, lt: now } },
+          orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+          take: 8,
+          select: {
+            id: true,
+            type: true,
+            status: true,
+            createdAt: true,
+            client: { select: { firstName: true, lastName: true } },
+            items: { select: { productSlug: true } },
+          },
+        }),
+        prisma.order.count({ where: { createdAt: { gte: todayStart, lt: now } } }),
+        prisma.order.count({ where: { createdAt: { gte: weekStart, lt: now } } }),
+        prisma.order.count({ where: { status: "NEW", createdAt: { lte: overdueBefore } } }),
+        prisma.order.findMany({
+          where: { status: "NEW", createdAt: { lte: overdueBefore } },
+          select: { id: true, createdAt: true },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          take: 5,
+        }),
+      ],
+      { isolationLevel: "RepeatableRead" },
+    );
   return aggregateDashboard({
     orders,
     range,
@@ -127,6 +146,19 @@ export async function getDashboardStats(requestedRange: DashboardRange): Promise
       createdAt: order.createdAt.toISOString(),
       productNames: order.items.map((item) => getProductName(item.productSlug)),
     })),
+    operations: {
+      slaMinutes: CRM_SLA_MINUTES,
+      timezone: CRM_TIMEZONE,
+      checkedAt: now.toISOString(),
+      todayCount,
+      weekCount,
+      overdueCount,
+      oldestOverdue: oldestOverdue.map((order) => ({
+        id: order.id,
+        createdAt: order.createdAt.toISOString(),
+        ageMinutes: slaAgeMinutes(order.createdAt, now),
+      })),
+    },
   });
 }
 
@@ -164,6 +196,7 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
       where,
       include: {
         items: true,
+        telegramOutbox: true,
         client: {
           include: {
             orders: {
@@ -197,6 +230,14 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
       utmCampaign: order.utmCampaign,
       entryPoint: order.entryPoint,
       sessionHistory: parseHistory(order.sessionHistory),
+      delivery: order.telegramOutbox
+        ? {
+            state: order.telegramOutbox.state,
+            attempts: order.telegramOutbox.attempts,
+            nextAttemptAt: order.telegramOutbox.nextAttemptAt.toISOString(),
+            lastErrorCode: order.telegramOutbox.lastErrorCode,
+          }
+        : null,
       submitted: {
         firstName: order.submittedFirstName,
         lastName: order.submittedLastName,
@@ -253,15 +294,62 @@ export async function updateOrderStatus(orderId: string, nextStatus: string) {
     return { ok: false, message: "Некорректный заказ или статус." };
   }
 
-  const existing = await prisma.order.findUnique({ where: { id: parsedId.data }, select: { id: true } });
-  if (!existing) return { ok: false, message: "Заявка не найдена." };
-
-  await prisma.order.update({ where: { id: parsedId.data }, data: { status: parsedStatus.data } });
+  const result = await transitionOrderStatus(
+    {
+      orderId: parsedId.data,
+      nextStatus: parsedStatus.data,
+      source: "crm",
+      actorKey: `crm:${process.env.CRM_BASIC_USER || "local-development"}`,
+    },
+    prisma,
+  );
+  if (result.outcome === "not_found") return { ok: false, message: "Заявка не найдена." };
+  if (result.outcome === "invalid_transition") {
+    return { ok: false, message: `Переход ${result.previousStatus} → ${result.status} запрещён.` };
+  }
+  if (result.outcome === "conflict") return { ok: false, message: "Статус уже изменён. Обновите список." };
   revalidatePath("/dashboard");
   revalidatePath("/orders");
   revalidatePath("/clients");
   revalidatePath("/results");
-  return { ok: true, message: "Статус обновлён." };
+  return { ok: true, message: result.outcome === "unchanged" ? "Статус уже установлен." : "Статус обновлён." };
+}
+
+export async function retryTelegramDelivery(orderId: string) {
+  await requireCrmAccess();
+  const parsed = z.string().uuid().safeParse(orderId);
+  if (!parsed.success) return { ok: false, message: "Некорректная заявка." };
+  const updated = await rearmTelegramOutbox(parsed.data, prisma);
+  if (updated) {
+    const botToken = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? "";
+    const chatId = process.env.TELEGRAM_CHAT_ID?.trim() ?? "";
+    if (!botToken || !chatId) return { ok: false, message: "Очередь восстановлена, но Telegram не настроен." };
+    const result = await deliverTelegramOutbox(
+      parsed.data,
+      (payload) => sendTelegramApplication(payload, { botToken, chatId }),
+      { db: prisma },
+    );
+    revalidatePath("/orders");
+    revalidatePath("/dashboard");
+    return result.delivery === "sent"
+      ? { ok: true, message: "Заявка доставлена в Telegram." }
+      : { ok: false, message: `Повтор не завершён: ${result.state}. Заявка остаётся в CRM.` };
+  }
+  revalidatePath("/orders");
+  revalidatePath("/dashboard");
+  return { ok: false, message: "Эту доставку нельзя повторить в текущем состоянии." };
+}
+
+export async function cancelTelegramDelivery(orderId: string) {
+  await requireCrmAccess();
+  const parsed = z.string().uuid().safeParse(orderId);
+  if (!parsed.success) return { ok: false, message: "Некорректная заявка." };
+  const updated = await cancelTelegramOutbox(parsed.data, prisma);
+  revalidatePath("/orders");
+  revalidatePath("/dashboard");
+  return updated
+    ? { ok: true, message: "Повторная доставка отменена. Заявка сохранена в CRM." }
+    : { ok: false, message: "Эту доставку нельзя отменить в текущем состоянии." };
 }
 
 export async function deleteOrder(orderId: string) {

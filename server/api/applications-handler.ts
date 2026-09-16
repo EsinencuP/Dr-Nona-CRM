@@ -2,6 +2,7 @@ import { validateApplicationInput } from "../../shared/applications/application-
 import { processApplication } from "../applications/application-service";
 import type { ApplicationProduct } from "../applications/application-types";
 import { sendTelegramApplication } from "../applications/providers/telegram-provider";
+import { processDueTelegramOutbox } from "../applications/telegram-outbox";
 import { type ContactEnvironment, readContactEnvironment } from "../config/contact-env";
 import { type ProxyVerification, verifyApplicationProxyRequest } from "../http/application-proxy-signature";
 import { applicationRateLimitGuard, type RateLimitDecision } from "../http/application-rate-limit";
@@ -116,6 +117,16 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
       },
       { idempotencyKey },
     );
+    if (!dependencies.process && serviceResult.outcome !== "failure" && serviceResult.outcome !== "conflict") {
+      await processDueTelegramOutbox(
+        (message) =>
+          sendTelegramApplication(message, {
+            botToken: environment.telegramBotToken,
+            chatId: environment.telegramChatId,
+          }),
+        { limit: 1 },
+      ).catch(() => undefined);
+    }
     const responseBody = {
       ok: serviceResult.outcome !== "failure",
       requestId: serviceResult.requestId,
@@ -128,9 +139,13 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
       return jsonResponse({ ok: false, code: "IDEMPOTENCY_CONFLICT" }, 409);
     }
     if (serviceResult.outcome === "in_progress") {
-      return jsonResponse({ ok: false, code: "REQUEST_IN_PROGRESS", requestId: serviceResult.requestId }, 409, {
-        "Retry-After": "30",
-      });
+      return jsonResponse(
+        { ok: true, code: "REQUEST_ACCEPTED", requestId: serviceResult.requestId, delivery: serviceResult.delivery },
+        202,
+        {
+          "Retry-After": "30",
+        },
+      );
     }
     return jsonResponse({ ok: false, code: "DELIVERY_FAILED", requestId: serviceResult.requestId }, 502);
   };

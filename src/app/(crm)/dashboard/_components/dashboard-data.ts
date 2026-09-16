@@ -130,6 +130,7 @@ export function aggregateDashboard({
   statuses,
   recentOrders,
   productNames,
+  operations,
 }: {
   orders: DashboardOrder[];
   range: DashboardRange;
@@ -139,6 +140,7 @@ export function aggregateDashboard({
   statuses: Array<{ status: string; count: number }>;
   recentOrders: DashboardStats["recentOrders"];
   productNames: ReadonlyMap<string, string>;
+  operations?: DashboardStats["operations"];
 }): DashboardStats {
   const start = startDateForRange(range, now);
   const current = orders.filter((order) => order.createdAt < now && (!start || order.createdAt >= start));
@@ -259,5 +261,14 @@ export function aggregateDashboard({
       cancelledMissingRetail: totals.cancelledMissingRetail,
     },
     lostRevenue: totals.lostRevenue,
+    operations: operations ?? {
+      slaMinutes: 60,
+      timezone: "Europe/Chisinau",
+      checkedAt: now.toISOString(),
+      todayCount: 0,
+      weekCount: 0,
+      overdueCount: 0,
+      oldestOverdue: [],
+    },
   };
 }

@@ -30,6 +30,15 @@ const failed = (): ProviderResult => ({
 });
 
 function dependencies(telegram: () => Promise<ProviderResult>) {
+  let persistedPayload = "";
+  const saveApplication = vi.fn<NonNullable<ApplicationServiceDependencies["saveApplication"]>>(async (write) => {
+    persistedPayload = write.telegramPayload;
+    return {
+      success: true as const,
+      orderId: "request-fixed",
+      disposition: "created" as const,
+    };
+  });
   return {
     productsBySlug: new Map([
       [
@@ -45,21 +54,21 @@ function dependencies(telegram: () => Promise<ProviderResult>) {
     createRequestId: () => "request-fixed",
     now: () => new Date("2030-01-01T00:00:00.000Z"),
     logger: vi.fn(),
-    saveApplication: vi.fn<NonNullable<ApplicationServiceDependencies["saveApplication"]>>(async () => ({
-      success: true as const,
-      orderId: "request-fixed",
-      disposition: "created" as const,
-    })),
-    completeDelivery: vi.fn(async () => true),
-    markDeliveryFailed: vi.fn(async () => true),
+    saveApplication,
+    deliverOutbox: vi.fn<NonNullable<ApplicationServiceDependencies["deliverOutbox"]>>(async (orderId, send) => {
+      const result = await send(persistedPayload).catch(() => failed());
+      return result.status === "sent"
+        ? { orderId, delivery: "sent" as const, state: "DELIVERED" as const, attempts: 1 }
+        : { orderId, delivery: "failed" as const, state: "TERMINAL" as const, attempts: 1 };
+    }),
   };
 }
 
 describe("application service", () => {
   test.each([
     ["success", () => Promise.resolve(sent())],
-    ["failure", () => Promise.resolve(failed())],
-    ["failure", () => Promise.reject(new Error("provider failed"))],
+    ["success", () => Promise.resolve(failed())],
+    ["success", () => Promise.reject(new Error("provider failed"))],
   ])("returns %s for Telegram result", async (outcome, telegram) => {
     const result = await processApplication(input, dependencies(telegram));
     expect(result.outcome).toBe(outcome);
@@ -77,7 +86,7 @@ describe("application service", () => {
 
     expect(result).toMatchObject({ outcome: "failure", delivery: { telegram: "failed" } });
     expect(deps.sendTelegram).not.toHaveBeenCalled();
-    expect(deps.completeDelivery).not.toHaveBeenCalled();
+    expect(deps.deliverOutbox).not.toHaveBeenCalled();
   });
 
   test("uses the server request ID in the Telegram message", async () => {
@@ -182,7 +191,7 @@ describe("application service", () => {
 
     expect(result).toMatchObject({ outcome: "success", requestId: "original-request", replayed: true });
     expect(deps.sendTelegram).not.toHaveBeenCalled();
-    expect(deps.completeDelivery).not.toHaveBeenCalled();
+    expect(deps.deliverOutbox).not.toHaveBeenCalled();
   });
 
   test.each([
@@ -209,6 +218,12 @@ describe("application service", () => {
       orderId: "original-request",
       disposition: "retry" as const,
     }));
+    deps.deliverOutbox = vi.fn(async (orderId, send) => {
+      const provider = await send(`ID заявки: ${orderId}`);
+      return provider.status === "sent"
+        ? { orderId, delivery: "sent" as const, state: "DELIVERED" as const, attempts: 1 }
+        : { orderId, delivery: "failed" as const, state: "TERMINAL" as const, attempts: 1 };
+    });
 
     const result = await processApplication(input, deps, { idempotencyKey: "same-key" });
 
@@ -218,6 +233,6 @@ describe("application service", () => {
       expect.objectContaining({ requestId: "original-request" }),
       expect.stringContaining("original-request"),
     );
-    expect(deps.completeDelivery).toHaveBeenCalledWith("original-request", "telegram-id");
+    expect(deps.deliverOutbox).toHaveBeenCalledWith("original-request", expect.any(Function));
   });
 });

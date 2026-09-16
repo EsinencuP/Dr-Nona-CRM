@@ -57,6 +57,15 @@ export type DashboardStats = {
     cancelledMissingRetail: number;
   };
   lostRevenue: number;
+  operations: {
+    slaMinutes: number;
+    timezone: "Europe/Chisinau";
+    checkedAt: string;
+    todayCount: number;
+    weekCount: number;
+    overdueCount: number;
+    oldestOverdue: Array<{ id: string; createdAt: string; ageMinutes: number }>;
+  };
 };
 
 export type OrderView = {
@@ -75,6 +84,12 @@ export type OrderView = {
   utmCampaign: string | null;
   entryPoint: string | null;
   sessionHistory: string[];
+  delivery: {
+    state: "PENDING" | "SENDING" | "DELIVERED" | "NEEDS_REVIEW" | "TERMINAL" | "CANCELLED";
+    attempts: number;
+    nextAttemptAt: string;
+    lastErrorCode: string | null;
+  } | null;
   submitted: {
     firstName: string;
     lastName: string;

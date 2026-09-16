@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, describe, expect, test, vi } from "vitest";
 
 import {
   completeApplicationDelivery,
@@ -10,6 +10,11 @@ import {
   saveMessageIdToDb,
   updateOrderStatusByTelegramMessageId,
 } from "../../server/applications/application-db.js";
+import {
+  cancelTelegramOutbox,
+  deliverTelegramOutbox,
+  rearmTelegramOutbox,
+} from "../../server/applications/telegram-outbox.js";
 import { updateCanonicalClientProfile } from "../../server/clients/client-profile.js";
 import {
   createApplicationRateLimitGuard,
@@ -61,6 +66,7 @@ describe("database and status integration", () => {
         phoneNormalized: testPhoneNormalized,
         region: "Кишинёв",
         type: "order",
+        telegramPayload: `test lifecycle ${orderId}`,
         products: [{ slug: "solaris-body-lotion", quantity: 3 }],
       },
       db,
@@ -86,7 +92,7 @@ describe("database and status integration", () => {
       ],
     });
 
-    const transitions: OrderStatus[] = ["PROCESSING", "DELIVERY", "CANCELLED", "DONE"];
+    const transitions: OrderStatus[] = ["PROCESSING", "DELIVERY", "DONE"];
     for (const status of transitions) {
       await expect(updateOrderStatusByTelegramMessageId(telegramMessageId, status, db)).resolves.toBe(true);
       await expect(
@@ -96,6 +102,12 @@ describe("database and status integration", () => {
         }),
       ).resolves.toEqual({ status });
     }
+
+    await expect(updateOrderStatusByTelegramMessageId(telegramMessageId, "CANCELLED", db)).resolves.toBe(false);
+    await expect(db.orderStatusAudit.count({ where: { orderId } })).resolves.toBe(3);
+    await expect(db.order.findUnique({ where: { id: orderId }, select: { firstActionAt: true } })).resolves.toEqual({
+      firstActionAt: expect.any(Date),
+    });
 
     await expect(updateOrderStatusByTelegramMessageId("unknown-message", "DONE", db)).resolves.toBe(false);
     await expect(
@@ -123,6 +135,7 @@ describe("database and status integration", () => {
       email: "ana@example.test",
       region: "Кишинёв",
       type: "order" as const,
+      telegramPayload: "test profile payload",
       products: [{ slug: "solaris-body-lotion", quantity: 1 }],
     };
     await expect(saveApplicationToDb({ ...original, requestId: firstId }, db)).resolves.toMatchObject({
@@ -222,6 +235,7 @@ describe("database and status integration", () => {
       phoneNormalized: testPhoneNormalized,
       region: "Кишинёв",
       type: "order" as const,
+      telegramPayload: "test price payload",
       products: [{ slug: priceTestSlug, quantity: 2 }],
     };
     await expect(saveApplicationToDb(input, db)).resolves.toEqual({
@@ -268,6 +282,7 @@ describe("database and status integration", () => {
       phoneNormalized: testPhoneNormalized,
       region: "Кишинёв",
       type: "order" as const,
+      telegramPayload: "test idempotency payload",
       products: [{ slug: "solaris-body-lotion", quantity: 1 }],
     };
 
@@ -348,5 +363,83 @@ describe("database and status integration", () => {
     await expect(secondInstance(signedRequest)).resolves.toMatchObject({ allowed: true });
     await expect(firstInstance(signedRequest)).resolves.toMatchObject({ allowed: false, reason: "limit" });
     await expect(db.applicationRateLimitBucket.count({ where: { clientKey } })).resolves.toBe(1);
+  }, 20_000);
+
+  test("retries explicit Telegram failures with backoff and never duplicates a delivered message", async () => {
+    const orderId = `test-outbox-${process.pid}-${Date.now()}`;
+    await expect(
+      saveApplicationToDb(
+        {
+          requestId: orderId,
+          firstName: "Outbox",
+          lastName: "Test",
+          phone: testPhone,
+          phoneNormalized: testPhoneNormalized,
+          region: "Кишинёв",
+          type: "order",
+          telegramPayload: "durable payload",
+          products: [{ slug: "solaris-body-lotion", quantity: 1 }],
+        },
+        db,
+      ),
+    ).resolves.toMatchObject({ success: true, orderId });
+    const failedSender = vi.fn(async () => ({
+      provider: "telegram" as const,
+      status: "failed" as const,
+      statusCode: 500,
+      errorCode: "HTTP_500",
+      durationMs: 1,
+    }));
+    const start = new Date("2030-01-01T00:00:00.000Z");
+    await expect(deliverTelegramOutbox(orderId, failedSender, { db, now: start })).resolves.toMatchObject({
+      delivery: "pending",
+      attempts: 1,
+    });
+    await deliverTelegramOutbox(orderId, failedSender, { db, now: start });
+    expect(failedSender).toHaveBeenCalledOnce();
+
+    const sentSender = vi.fn(async () => ({
+      provider: "telegram" as const,
+      status: "sent" as const,
+      providerMessageId: `tg-outbox-${Date.now()}`,
+      durationMs: 1,
+    }));
+    await expect(
+      deliverTelegramOutbox(orderId, sentSender, { db, now: new Date(start.getTime() + 61_000) }),
+    ).resolves.toMatchObject({ delivery: "sent", state: "DELIVERED", attempts: 2 });
+    await deliverTelegramOutbox(orderId, sentSender, { db, now: new Date(start.getTime() + 120_000) });
+    expect(sentSender).toHaveBeenCalledOnce();
+    await deleteOrderFromDb(orderId, db);
+  }, 20_000);
+
+  test("holds uncertain Telegram outcomes for review and supports explicit rearm or cancel", async () => {
+    const orderId = `test-outbox-review-${process.pid}-${Date.now()}`;
+    await saveApplicationToDb(
+      {
+        requestId: orderId,
+        firstName: "Review",
+        lastName: "Test",
+        phone: testPhone,
+        phoneNormalized: testPhoneNormalized,
+        region: "Кишинёв",
+        type: "order",
+        telegramPayload: "review payload",
+        products: [{ slug: "solaris-body-lotion", quantity: 1 }],
+      },
+      db,
+    );
+    await expect(
+      deliverTelegramOutbox(
+        orderId,
+        async () => ({ provider: "telegram", status: "failed", errorCode: "NETWORK_ERROR", durationMs: 1 }),
+        { db, now: new Date("2030-01-01T00:00:00.000Z") },
+      ),
+    ).resolves.toMatchObject({ delivery: "failed", state: "NEEDS_REVIEW" });
+    await expect(rearmTelegramOutbox(orderId, db)).resolves.toBe(true);
+    await expect(cancelTelegramOutbox(orderId, db)).resolves.toBe(true);
+    await expect(db.telegramOutbox.findUnique({ where: { orderId }, select: { state: true } })).resolves.toEqual({
+      state: "CANCELLED",
+    });
+    await deleteOrderFromDb(orderId, db);
   }, 20_000);
 });

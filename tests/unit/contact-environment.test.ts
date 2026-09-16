@@ -18,6 +18,8 @@ describe("contact deployment environment", () => {
         telegramBotToken: "test-token",
         telegramChatId: "test-chat",
         proxySharedSecret: "test-shared-secret",
+        telegramWebhookSecret: undefined,
+        telegramManagerUserIds: new Set(),
       },
     });
   });

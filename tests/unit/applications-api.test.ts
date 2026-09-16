@@ -15,6 +15,7 @@ const environment: ContactEnvironment = {
   telegramBotToken: "test-token",
   telegramChatId: "test-chat",
   proxySharedSecret: "test-shared-secret-at-least-32-bytes",
+  telegramManagerUserIds: new Set(["777"]),
 };
 const validBody = {
   locale: "ru-MD",
@@ -346,19 +347,32 @@ describe("POST /api/applications", () => {
     expect(JSON.stringify(logger.mock.calls)).not.toMatch(/Ana|Popescu|069|Кишинёв/u);
   });
 
-  test.each([
-    ["conflict", "IDEMPOTENCY_CONFLICT"],
-    ["in_progress", "REQUEST_IN_PROGRESS"],
-  ] as const)("returns a stable 409 for %s idempotency state", async (outcome, code) => {
+  test("returns a stable 409 for a conflicting idempotency key", async () => {
     const response = await handler({
       requestId: "request-existing",
       type: "order",
       delivery: { telegram: "pending" },
-      outcome,
+      outcome: "conflict",
     })(request());
 
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ ok: false, code });
-    if (outcome === "in_progress") expect(response.headers.get("Retry-After")).toBe("30");
+    expect(await response.json()).toMatchObject({ ok: false, code: "IDEMPOTENCY_CONFLICT" });
+  });
+
+  test("reports an already persisted in-progress application as accepted", async () => {
+    const response = await handler({
+      requestId: "request-existing",
+      type: "order",
+      delivery: { telegram: "pending" },
+      outcome: "in_progress",
+    })(request());
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      code: "REQUEST_ACCEPTED",
+      delivery: { telegram: "pending" },
+    });
+    expect(response.headers.get("Retry-After")).toBe("30");
   });
 });

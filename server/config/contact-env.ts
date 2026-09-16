@@ -4,6 +4,7 @@ export type ContactEnvironment = {
   telegramChatId: string;
   proxySharedSecret: string;
   telegramWebhookSecret?: string;
+  telegramManagerUserIds: Set<string>;
 };
 
 export type ContactEnvironmentResult =
@@ -53,6 +54,12 @@ export function readContactEnvironment(
       telegramChatId,
       proxySharedSecret,
       telegramWebhookSecret: environment.TELEGRAM_WEBHOOK_SECRET?.trim() || undefined,
+      telegramManagerUserIds: new Set(
+        (environment.TELEGRAM_MANAGER_USER_IDS ?? "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => /^-?\d+$/u.test(value)),
+      ),
     },
   };
 }

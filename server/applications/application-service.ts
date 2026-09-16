@@ -1,11 +1,6 @@
 import type { ApplicationInput } from "../../shared/applications/application-schema";
 import { normalizePhone } from "../../shared/applications/application-schema";
-import {
-  completeApplicationDelivery,
-  type DbWriteInput,
-  markApplicationDeliveryFailed,
-  saveApplicationToDb,
-} from "./application-db";
+import { type DbWriteInput, saveApplicationToDb } from "./application-db";
 import { createApplicationIdempotency } from "./application-idempotency";
 import type {
   ApplicationExtraFields,
@@ -15,6 +10,7 @@ import type {
   ProviderResult,
 } from "./application-types";
 import { formatTelegramApplication } from "./format-application";
+import { deliverTelegramOutbox, type OutboxDeliveryResult, type TelegramPayloadSender } from "./telegram-outbox";
 import { randomUUID } from "node:crypto";
 
 export type ApplicationServiceDependencies = {
@@ -25,8 +21,7 @@ export type ApplicationServiceDependencies = {
   logger?: (metadata: Record<string, unknown>) => void;
   extraFields?: ApplicationExtraFields;
   saveApplication?: typeof saveApplicationToDb;
-  completeDelivery?: typeof completeApplicationDelivery;
-  markDeliveryFailed?: typeof markApplicationDeliveryFailed;
+  deliverOutbox?: (orderId: string, send: TelegramPayloadSender) => Promise<OutboxDeliveryResult>;
 };
 
 export async function processApplication(
@@ -100,6 +95,7 @@ export async function processApplication(
     eventDate = input.eventDate;
     eventTime = input.eventTime;
   }
+  const message = formatTelegramApplication(record);
   const dbInput: DbWriteInput = {
     requestId,
     firstName: input.firstName,
@@ -111,12 +107,16 @@ export async function processApplication(
     type: input.type,
     comment: input.comment?.trim() || dependencies.extraFields?.comment,
     preferredCallTime: input.preferredCallTime?.trim() || dependencies.extraFields?.preferredCallTime,
-    utmSource: input.utmSource ?? dependencies.extraFields?.utmSource,
-    utmMedium: input.utmMedium ?? dependencies.extraFields?.utmMedium,
-    utmCampaign: input.utmCampaign ?? dependencies.extraFields?.utmCampaign,
-    utmContent: input.utmContent ?? dependencies.extraFields?.utmContent,
-    entryPoint: input.entryPoint ?? dependencies.extraFields?.entryPoint,
-    sessionHistory: input.sessionHistory ?? dependencies.extraFields?.sessionHistory,
+    utmSource: input.attribution?.lastTouch.source ?? input.utmSource ?? dependencies.extraFields?.utmSource,
+    utmMedium: input.attribution?.lastTouch.medium ?? input.utmMedium ?? dependencies.extraFields?.utmMedium,
+    utmCampaign: input.attribution?.lastTouch.campaign ?? input.utmCampaign ?? dependencies.extraFields?.utmCampaign,
+    utmContent: input.attribution?.lastTouch.content ?? input.utmContent ?? dependencies.extraFields?.utmContent,
+    entryPoint: input.attribution?.entry.path ?? input.entryPoint ?? dependencies.extraFields?.entryPoint,
+    sessionHistory: input.attribution
+      ? JSON.stringify(input.attribution.sessionHistory)
+      : (input.sessionHistory ?? dependencies.extraFields?.sessionHistory),
+    attribution: input.attribution,
+    telegramPayload: message,
     eventDate,
     eventTime,
     masterclassTopic: input.type === "masterclass" ? input.masterclassTopic : undefined,
@@ -188,53 +188,21 @@ export async function processApplication(
   }
   const activeRequestId = dbResult.orderId;
   record = { ...record, requestId: activeRequestId };
-  const message = formatTelegramApplication(record);
-  const telegramResult = await dependencies.sendTelegram(record, message).catch(() => undefined);
-  if (telegramResult?.status === "sent" && telegramResult.providerMessageId) {
-    const completionSaved = await (dependencies.completeDelivery ?? completeApplicationDelivery)(
-      activeRequestId,
-      telegramResult.providerMessageId,
-    );
-    if (!completionSaved) {
-      dependencies.logger?.({
-        event: "application.delivery.completed",
-        requestId: activeRequestId,
-        type: record.type,
-        telegramStatus: "sent_unconfirmed",
-        failureClass: "delivery_state_persistence",
-        durationMs: Date.now() - startedAt,
-      });
-      return {
-        requestId: activeRequestId,
-        type: record.type,
-        delivery: { telegram: "sent" },
-        outcome: "in_progress",
-      };
-    }
-  }
-  const delivery = {
-    telegram:
-      telegramResult?.provider === "telegram" && telegramResult.status === "sent"
-        ? ("sent" as const)
-        : ("failed" as const),
-  };
-  const outcome = delivery.telegram === "sent" ? "success" : "failure";
-  if (outcome === "failure") {
-    await (dependencies.markDeliveryFailed ?? markApplicationDeliveryFailed)(
-      activeRequestId,
-      telegramResult?.status === "failed" ? telegramResult.errorCode : "PROVIDER_UNAVAILABLE",
-    );
-  }
+  const outboxResult = await (dependencies.deliverOutbox ?? deliverTelegramOutbox)(activeRequestId, (payload) =>
+    dependencies.sendTelegram(record, payload),
+  );
+  const delivery = { telegram: outboxResult.delivery };
   dependencies.logger?.({
     event: "application.delivery.completed",
     requestId: activeRequestId,
     type: record.type,
     telegramStatus: delivery.telegram,
-    ...(outcome === "failure" && {
+    ...(delivery.telegram !== "sent" && {
       failureClass: "telegram_delivery",
-      providerErrorCode: telegramResult?.status === "failed" ? telegramResult.errorCode : "PROVIDER_UNAVAILABLE",
+      outboxState: outboxResult.state,
+      attempts: outboxResult.attempts,
     }),
     durationMs: Date.now() - startedAt,
   });
-  return { requestId: activeRequestId, type: record.type, delivery, outcome };
+  return { requestId: activeRequestId, type: record.type, delivery, outcome: "success" };
 }

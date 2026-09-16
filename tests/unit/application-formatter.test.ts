@@ -51,6 +51,7 @@ describe("application formatter", () => {
         "2. Second — SKU не указан",
         "",
         "ID заявки: request-123",
+        "Ref: order:request-123",
         "Получено: 19.06.2030, 11:30:00",
         "Источник: сайт Dr. Nona Moldova",
         "",

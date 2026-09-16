@@ -8,6 +8,59 @@ const NAME_MAX = 60;
 const PHONE_MAX = 32;
 const SLUG_MAX = 100;
 
+const orderItemSlugSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(SLUG_MAX)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u);
+const hasNoControlCharacters = (value: string) =>
+  Array.from(value).every((character) => character.charCodeAt(0) > 31 && character.charCodeAt(0) !== 127);
+const attributionText = z.string().trim().min(1).max(100).refine(hasNoControlCharacters);
+const attributionRawText = z.string().trim().min(1).max(200).refine(hasNoControlCharacters);
+const attributionTouchSchema = z.object({
+  kind: z.enum(["direct", "campaign"]),
+  source: attributionText.optional(),
+  medium: attributionText.optional(),
+  campaign: attributionText.optional(),
+  content: attributionText.optional(),
+  raw: z
+    .object({
+      source: attributionRawText.optional(),
+      medium: attributionRawText.optional(),
+      campaign: attributionRawText.optional(),
+      content: attributionRawText.optional(),
+    })
+    .optional(),
+  capturedAt: z.string().datetime({ offset: true }),
+});
+
+export const applicationAttributionSchema = z.object({
+  version: z.literal(1),
+  consent: z.literal("application_submission"),
+  firstTouch: attributionTouchSchema,
+  lastTouch: attributionTouchSchema,
+  entry: z.object({
+    path: z
+      .string()
+      .trim()
+      .min(1)
+      .max(300)
+      .refine(
+        (value) =>
+          value.startsWith("/") &&
+          !value.startsWith("//") &&
+          !value.includes("?") &&
+          !value.includes("#") &&
+          hasNoControlCharacters(value),
+      ),
+    locale: z.enum(["ru-MD", "ro-MD"]),
+  }),
+  sessionHistory: z.array(orderItemSlugSchema).max(20),
+});
+
+export type ApplicationAttribution = z.infer<typeof applicationAttributionSchema>;
+
 const trimmedText = (label: string, max: number) =>
   z
     .string({ error: `${label}: обязательное поле` })
@@ -47,6 +100,7 @@ const baseApplicationSchema = z.object({
   utmContent: z.string().trim().max(200).optional(),
   entryPoint: z.string().trim().max(500).optional(),
   sessionHistory: z.string().trim().max(2000).optional(),
+  attribution: applicationAttributionSchema.optional(),
 });
 
 export const orderItemSchema = z.object({
@@ -176,6 +230,14 @@ export function validateApplicationInput(
       fieldErrors.eventDate = "Выберите дату мастер-класса начиная со следующего дня";
     } else if (violation === "after_maximum") {
       fieldErrors.eventDate = "Выберите дату мастер-класса не позднее чем через 180 дней";
+    }
+  }
+
+  if (data.attribution) {
+    if (data.attribution.entry.locale !== data.locale) {
+      fieldErrors.attribution = "Язык точки входа не соответствует заявке";
+    } else if (data.attribution.sessionHistory.some((slug) => !options.allowedProductSlugs.has(slug))) {
+      fieldErrors.attribution = "История содержит неизвестный товар";
     }
   }
 

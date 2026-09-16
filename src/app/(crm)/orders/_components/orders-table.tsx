@@ -25,11 +25,19 @@ import type { OrderStatus, OrdersResult, OrderView } from "@/lib/crm-types";
 import { ORDER_STATUSES } from "@/lib/crm-types";
 
 import { StatusBadge } from "../../_components/status-badge";
-import { deleteOrder, updateOrderStatus } from "../../actions";
+import { cancelTelegramDelivery, deleteOrder, retryTelegramDelivery, updateOrderStatus } from "../../actions";
 
 const AUTO_REFRESH_MS = 10_000;
 
-function OrderDetail({ order }: { order: OrderView }) {
+function OrderDetail({
+  order,
+  pending,
+  onDeliveryAction,
+}: {
+  order: OrderView;
+  pending: boolean;
+  onDeliveryAction: (order: OrderView, action: "retry" | "cancel") => void;
+}) {
   const total = order.items.reduce((sum, item) => sum + item.priceAtPurchase * item.quantity, 0);
   return (
     <div className="space-y-5 px-5 pb-6">
@@ -209,6 +217,35 @@ function OrderDetail({ order }: { order: OrderView }) {
         </section>
       ) : null}
 
+      {order.delivery && order.delivery.state !== "DELIVERED" ? (
+        <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4" aria-labelledby="delivery-title">
+          <h3 id="delivery-title" className="font-extrabold text-sm">
+            Доставка в Telegram
+          </h3>
+          <p className="mt-2 text-sm leading-6">
+            Состояние: <strong>{order.delivery.state}</strong>; попыток: {order.delivery.attempts}.
+            {order.delivery.lastErrorCode ? ` Код: ${order.delivery.lastErrorCode}.` : ""}
+          </p>
+          <p className="mt-1 text-amber-900 text-xs">
+            Заявка сохранена в CRM независимо от доставки. Перед повтором NEEDS_REVIEW проверьте Telegram на дубликат.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {(order.delivery.state === "NEEDS_REVIEW" || order.delivery.state === "TERMINAL") && (
+              <Button size="sm" onClick={() => onDeliveryAction(order, "retry")} disabled={pending}>
+                Повторить доставку
+              </Button>
+            )}
+            {(order.delivery.state === "PENDING" ||
+              order.delivery.state === "NEEDS_REVIEW" ||
+              order.delivery.state === "TERMINAL") && (
+              <Button size="sm" variant="outline" onClick={() => onDeliveryAction(order, "cancel")} disabled={pending}>
+                Отменить повтор
+              </Button>
+            )}
+          </div>
+        </section>
+      ) : null}
+
       <section>
         <h3 className="font-extrabold text-sm">Предыдущие обращения</h3>
         {order.client.previousOrders.length ? (
@@ -275,6 +312,20 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
         if (response.ok) {
           setSelected((current) => (current?.id === orderId ? null : current));
           setDeleteTarget(null);
+          router.refresh();
+        }
+      });
+    });
+  }
+
+  function manageDelivery(order: OrderView, action: "retry" | "cancel") {
+    setMessage("");
+    startTransition(() => {
+      const operation = action === "retry" ? retryTelegramDelivery(order.id) : cancelTelegramDelivery(order.id);
+      void operation.then((response) => {
+        setMessage(response.message);
+        if (response.ok) {
+          setSelected(null);
           router.refresh();
         }
       });
@@ -483,7 +534,7 @@ export function OrdersTable({ result }: { result: OrdersResult }) {
                   <StatusBadge status={selected.status} className="mt-1" />
                 </div>
               </SheetHeader>
-              <OrderDetail order={selected} />
+              <OrderDetail order={selected} pending={pending} onDeliveryAction={manageDelivery} />
             </>
           ) : null}
         </SheetContent>

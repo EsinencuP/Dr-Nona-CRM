@@ -5,12 +5,13 @@ const mocks = vi.hoisted(() => ({
   orders: vi.fn(),
   statuses: vi.fn(),
   clients: vi.fn(),
+  count: vi.fn(),
   transaction: vi.fn(),
 }));
 vi.mock("@/server/crm-auth", () => ({ requireCrmAccess: mocks.access }));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    order: { findMany: mocks.orders, groupBy: mocks.statuses },
+    order: { findMany: mocks.orders, groupBy: mocks.statuses, count: mocks.count },
     client: { count: mocks.clients },
     $transaction: mocks.transaction,
   },
@@ -23,7 +24,7 @@ describe("dashboard server action", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.access.mockResolvedValue(undefined);
-    mocks.transaction.mockResolvedValue([[], [], 0, 0, []]);
+    mocks.transaction.mockResolvedValue([[], [], 0, 0, [], 0, 0, 0, []]);
   });
   test("auth guard precedes reads and failed access returns no financial data", async () => {
     mocks.access.mockRejectedValueOnce(new Error("Unauthorized"));

@@ -1,4 +1,4 @@
-import { ApplicationSubmissionState } from "@prisma/client";
+import { TelegramOutboxState } from "@prisma/client";
 import { describe, expect, test, vi } from "vitest";
 
 import {
@@ -9,21 +9,21 @@ import {
 
 const now = new Date("2026-09-15T12:00:00.000Z");
 
-function record(state: ApplicationSubmissionState, minutesAgo: number, requestId: string): ApplicationDeliveryRecord {
+function record(state: TelegramOutboxState, minutesAgo: number, orderId: string): ApplicationDeliveryRecord {
   return {
-    requestId,
+    orderId,
     state,
     updatedAt: new Date(now.getTime() - minutesAgo * 60_000),
-    lastErrorCode: state === ApplicationSubmissionState.DELIVERY_FAILED ? "HTTP_502" : null,
+    lastErrorCode: state === TelegramOutboxState.TERMINAL ? "HTTP_502" : null,
   };
 }
 
 describe("application delivery health", () => {
-  test("alerts after three consecutive failures and recovers after a successful delivery", () => {
+  test("alerts on terminal failures while resetting the consecutive counter after success", () => {
     const failures = [
-      record(ApplicationSubmissionState.DELIVERY_FAILED, 1, "failed-1"),
-      record(ApplicationSubmissionState.DELIVERY_FAILED, 2, "failed-2"),
-      record(ApplicationSubmissionState.DELIVERY_FAILED, 3, "failed-3"),
+      record(TelegramOutboxState.TERMINAL, 1, "failed-1"),
+      record(TelegramOutboxState.TERMINAL, 2, "failed-2"),
+      record(TelegramOutboxState.TERMINAL, 3, "failed-3"),
     ];
     expect(summarizeApplicationHealth(failures, now)).toMatchObject({
       status: "attention",
@@ -31,17 +31,19 @@ describe("application delivery health", () => {
       deliveryFailures: 3,
     });
     expect(
-      summarizeApplicationHealth([record(ApplicationSubmissionState.DELIVERED, 0, "delivered"), ...failures], now),
-    ).toMatchObject({ status: "healthy", consecutiveFailures: 0 });
+      summarizeApplicationHealth([record(TelegramOutboxState.DELIVERED, 0, "delivered"), ...failures], now),
+    ).toMatchObject({ status: "attention", consecutiveFailures: 0, deliveryFailures: 3 });
   });
 
   test("alerts on one stale unknown delivery without treating a fresh send as failed", () => {
-    expect(
-      summarizeApplicationHealth([record(ApplicationSubmissionState.DELIVERY_STARTED, 3, "stale")], now),
-    ).toMatchObject({ status: "attention", staleDeliveries: 1 });
-    expect(
-      summarizeApplicationHealth([record(ApplicationSubmissionState.DELIVERY_STARTED, 1, "fresh")], now),
-    ).toMatchObject({ status: "healthy", staleDeliveries: 0 });
+    expect(summarizeApplicationHealth([record(TelegramOutboxState.SENDING, 6, "stale")], now)).toMatchObject({
+      status: "attention",
+      staleDeliveries: 1,
+    });
+    expect(summarizeApplicationHealth([record(TelegramOutboxState.PENDING, 10, "scheduled")], now)).toMatchObject({
+      status: "healthy",
+      staleDeliveries: 0,
+    });
   });
 
   test("authorizes before reading records and fails visibly when the database is unavailable", async () => {
