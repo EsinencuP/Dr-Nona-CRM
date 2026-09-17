@@ -1,9 +1,6 @@
 import { describe, expect, test } from "vitest";
 
 import { createXlsxWorkbook } from "../../server/exports/xlsx";
-import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 
 function sheetXml(archive: Buffer) {
@@ -32,7 +29,6 @@ describe("minimal Excel export", () => {
     expect(xml).toContain('<c r="B2"><v>120.5</v></c>');
     expect(xml).toContain("Иван &amp; Мария");
     expect(xml).not.toContain("<f>");
-    writeFileSync(join(tmpdir(), "dr-nona-xlsx-smoke.xlsx"), workbook);
   });
 
   test("rejects rows that would truncate silently", () => {
