@@ -204,6 +204,34 @@ function OrderDetail({
         </div>
       </section>
 
+      <section className="rounded-xl border bg-white p-4">
+        <h3 className="font-extrabold text-sm">Уведомления клиенту</h3>
+        {order.customerNotifications.length ? (
+          <ul className="mt-3 space-y-2">
+            {order.customerNotifications.map((notification) => (
+              <li
+                key={notification.id}
+                className="flex flex-wrap justify-between gap-2 rounded-lg bg-muted/55 p-3 text-sm"
+              >
+                <span>
+                  {notification.provider} · {notification.state} · попыток {notification.attempts}
+                </span>
+                <span className="text-muted-foreground">
+                  {notification.cost === null
+                    ? "Стоимость не получена"
+                    : `${notification.cost} ${notification.currency ?? ""}`}
+                  {notification.lastErrorCode ? ` · ${notification.lastErrorCode}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-muted-foreground text-sm">
+            Сообщения не отправлялись. Канал включается только после утверждения правового основания, шаблонов и SMS.MD.
+          </p>
+        )}
+      </section>
+
       {order.sessionHistory.length ? (
         <section>
           <h3 className="font-extrabold text-sm">Просмотренные товары</h3>

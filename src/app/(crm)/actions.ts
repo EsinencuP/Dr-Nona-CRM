@@ -2,12 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 
 import type {
   CatalogProductView,
   ClientView,
+  ConsultationSlotView,
   DashboardRange,
   DashboardStats,
   OrderStatus,
@@ -27,7 +28,14 @@ import {
   rearmTelegramOutbox,
 } from "../../../server/applications/telegram-outbox";
 import { fixedPriceSchema } from "../../../server/catalog/fixed-prices";
+import { calculateClientInsights } from "../../../server/clients/client-insights";
 import { updateCanonicalClientProfile } from "../../../server/clients/client-profile";
+import {
+  CONSULTATION_SLOT_MODES,
+  changeConsultationSlotState,
+  chisinauMinuteToDate,
+  createConsultationSlot,
+} from "../../../server/consultations/consultation-slots";
 import { CRM_SLA_MINUTES, CRM_TIMEZONE, getSlaWindows, slaAgeMinutes } from "../../../server/operations/sla-policy";
 import { transitionOrderStatus } from "../../../server/orders/order-status-service";
 import { normalizePhone } from "../../../shared/applications/application-schema";
@@ -197,6 +205,7 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
       include: {
         items: true,
         telegramOutbox: true,
+        customerNotifications: { orderBy: { createdAt: "desc" } },
         client: {
           include: {
             orders: {
@@ -238,6 +247,17 @@ export async function getOrders(filters: OrderFilters = {}): Promise<OrdersResul
             lastErrorCode: order.telegramOutbox.lastErrorCode,
           }
         : null,
+      customerNotifications: order.customerNotifications.map((notification) => ({
+        id: notification.id,
+        status: notification.status,
+        state: notification.state,
+        provider: notification.provider,
+        attempts: notification.attempts,
+        cost: notification.cost,
+        currency: notification.currency,
+        lastErrorCode: notification.lastErrorCode,
+        createdAt: notification.createdAt.toISOString(),
+      })),
       submitted: {
         firstName: order.submittedFirstName,
         lastName: order.submittedLastName,
@@ -384,6 +404,7 @@ export async function getClients(search = ""): Promise<ClientView[]> {
         }
       : undefined,
     include: {
+      notes: { orderBy: { createdAt: "desc" }, take: 50 },
       profileAudits: {
         select: { id: true, actor: true, createdAt: true },
         orderBy: { createdAt: "desc" },
@@ -412,14 +433,32 @@ export async function getClients(search = ""): Promise<ClientView[]> {
       region: client.region,
       createdAt: client.createdAt.toISOString(),
       updatedAt: client.updatedAt.toISOString(),
+      notificationsOptedOut: Boolean(client.customerNotificationsOptOutAt),
       orderCount: client.orders.length,
       firstOrderAt: orderedChronologically[0]?.createdAt.toISOString() ?? null,
       lastOrderAt: orderedChronologically.at(-1)?.createdAt.toISOString() ?? null,
       totalValue: client.orders.reduce(
         (total, order) =>
-          total + order.items.reduce((orderTotal, item) => orderTotal + item.priceAtPurchase * item.quantity, 0),
+          total +
+          (order.status === "DONE"
+            ? order.items.reduce(
+                (orderTotal, item) =>
+                  orderTotal + (item.priceAtPurchase > 0 ? item.priceAtPurchase * item.quantity : 0),
+                0,
+              )
+            : 0),
         0,
       ),
+      insights: (() => {
+        const insight = calculateClientInsights(client.orders);
+        return {
+          ...insight,
+          preferredProducts: insight.preferredProducts.map((product) => ({
+            ...product,
+            name: getProductName(product.slug),
+          })),
+        };
+      })(),
       orders: client.orders.map((order) => ({
         id: order.id,
         createdAt: order.createdAt.toISOString(),
@@ -432,8 +471,158 @@ export async function getClients(search = ""): Promise<ClientView[]> {
         actor: audit.actor,
         createdAt: audit.createdAt.toISOString(),
       })),
+      notes: client.notes.map((note) => ({
+        id: note.id,
+        body: note.body,
+        actor: note.actor,
+        createdAt: note.createdAt.toISOString(),
+      })),
     };
   });
+}
+
+const clientNoteSchema = z.string().trim().min(1).max(1200);
+
+export async function addClientNote(clientId: string, body: string) {
+  await requireCrmAccess();
+  const parsedId = z.string().uuid().safeParse(clientId);
+  const parsedBody = clientNoteSchema.safeParse(body);
+  if (!parsedId.success || !parsedBody.success) return { ok: false, message: "Проверьте текст заметки." };
+  const exists = await prisma.client.findUnique({ where: { id: parsedId.data }, select: { id: true } });
+  if (!exists) return { ok: false, message: "Клиент не найден." };
+  await prisma.clientNote.create({
+    data: {
+      clientId: parsedId.data,
+      body: parsedBody.data,
+      actor: (process.env.CRM_BASIC_USER || "local-development").slice(0, 160),
+    },
+  });
+  revalidatePath("/clients");
+  return { ok: true, message: "Заметка добавлена в журнал." };
+}
+
+export async function setClientNotificationOptOut(clientId: string, optedOut: boolean) {
+  await requireCrmAccess();
+  const parsedId = z.string().uuid().safeParse(clientId);
+  const parsedValue = z.boolean().safeParse(optedOut);
+  if (!parsedId.success || !parsedValue.success) return { ok: false, message: "Некорректное изменение уведомлений." };
+  const client = await prisma.client.findUnique({
+    where: { id: parsedId.data },
+    select: { customerNotificationsOptOutAt: true },
+  });
+  if (!client) return { ok: false, message: "Клиент не найден." };
+  const previous = Boolean(client.customerNotificationsOptOutAt);
+  if (previous === parsedValue.data) return { ok: true, message: "Изменений нет." };
+  await prisma.$transaction([
+    prisma.client.update({
+      where: { id: parsedId.data },
+      data: { customerNotificationsOptOutAt: parsedValue.data ? new Date() : null },
+    }),
+    prisma.clientProfileAudit.create({
+      data: {
+        clientId: parsedId.data,
+        actor: process.env.CRM_BASIC_USER || "local-development",
+        before: { customerNotificationsOptOut: previous },
+        after: { customerNotificationsOptOut: parsedValue.data },
+      },
+    }),
+  ]);
+  revalidatePath("/clients");
+  return {
+    ok: true,
+    message: parsedValue.data ? "Отказ от уведомлений зафиксирован." : "Разрешение восстановлено менеджером.",
+  };
+}
+
+export async function getConsultationSlots(): Promise<ConsultationSlotView[]> {
+  await requireCrmAccess();
+  const slots = await prisma.consultationSlot.findMany({
+    include: { audits: { orderBy: { createdAt: "desc" }, take: 10 } },
+    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+    take: 200,
+  });
+  return slots.map((slot) => ({
+    id: slot.id,
+    startsAt: slot.startsAt.toISOString(),
+    endsAt: slot.endsAt.toISOString(),
+    mode: slot.mode === "offline" ? "offline" : "online",
+    state: slot.state,
+    reservedOrderId: slot.reservedOrderId,
+    createdBy: slot.createdBy,
+    audits: slot.audits.map((audit) => ({
+      id: audit.id,
+      actor: audit.actor,
+      fromState: audit.fromState,
+      toState: audit.toState,
+      reason: audit.reason,
+      createdAt: audit.createdAt.toISOString(),
+    })),
+  }));
+}
+
+const slotInputSchema = z.object({
+  localStart: z.string().regex(/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/u),
+  durationMinutes: z.coerce.number().int().min(15).max(240),
+  mode: z.enum(CONSULTATION_SLOT_MODES),
+});
+
+export async function createConsultationSlotAction(raw: z.input<typeof slotInputSchema>) {
+  await requireCrmAccess();
+  const parsed = slotInputSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, message: "Проверьте дату, время, формат и длительность." };
+  const startsAt = chisinauMinuteToDate(parsed.data.localStart);
+  if (!startsAt || startsAt <= new Date())
+    return { ok: false, message: "Выберите однозначное будущее время Кишинёва." };
+  const endsAt = new Date(startsAt.getTime() + parsed.data.durationMinutes * 60_000);
+  try {
+    await createConsultationSlot(
+      { startsAt, endsAt, mode: parsed.data.mode, actor: process.env.CRM_BASIC_USER || "local-development" },
+      prisma,
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message === "CONSULTATION_SLOT_OVERLAP") {
+      return { ok: false, message: "Новый слот пересекается с существующим." };
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2004"].includes(error.code)) {
+      return { ok: false, message: "Слот с таким временем или пересечением уже существует." };
+    }
+    throw error;
+  }
+  revalidatePath("/orders");
+  return { ok: true, message: "Слот опубликован." };
+}
+
+export async function changeConsultationSlotStateAction(slotId: string, nextState: string, reason = "") {
+  await requireCrmAccess();
+  const parsedId = z.string().uuid().safeParse(slotId);
+  const parsedState = z.enum(["OPEN", "CLOSED", "CANCELLED"]).safeParse(nextState);
+  const parsedReason = z.string().trim().max(300).safeParse(reason);
+  if (!parsedId.success || !parsedState.success || !parsedReason.success)
+    return { ok: false, message: "Некорректное изменение слота." };
+  let result: Awaited<ReturnType<typeof changeConsultationSlotState>>;
+  try {
+    result = await changeConsultationSlotState(
+      {
+        slotId: parsedId.data,
+        nextState: parsedState.data,
+        actor: process.env.CRM_BASIC_USER || "local-development",
+        reason: parsedReason.data,
+      },
+      prisma,
+    );
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2004") {
+      return { ok: false, message: "Открытие слота пересекается с другим расписанием." };
+    }
+    throw error;
+  }
+  revalidatePath("/orders");
+  if (result.outcome === "updated" || result.outcome === "unchanged")
+    return { ok: true, message: "Состояние слота обновлено." };
+  if (result.outcome === "reserved")
+    return { ok: false, message: "Зарезервированный слот изменяется через статус связанной заявки." };
+  if (result.outcome === "past") return { ok: false, message: "Прошедший слот нельзя открыть повторно." };
+  return { ok: false, message: "Слот изменился или не найден. Обновите страницу." };
 }
 
 const clientProfileSchema = z.object({

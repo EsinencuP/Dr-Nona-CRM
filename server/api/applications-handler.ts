@@ -138,6 +138,9 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
     if (serviceResult.outcome === "conflict") {
       return jsonResponse({ ok: false, code: "IDEMPOTENCY_CONFLICT" }, 409);
     }
+    if (serviceResult.outcome === "slot_unavailable") {
+      return jsonResponse({ ok: false, code: "CONSULTATION_SLOT_UNAVAILABLE" }, 409);
+    }
     if (serviceResult.outcome === "in_progress") {
       return jsonResponse(
         { ok: true, code: "REQUEST_ACCEPTED", requestId: serviceResult.requestId, delivery: serviceResult.delivery },

@@ -12,7 +12,8 @@ import { cn } from "@/lib/utils";
 
 import { ExportDialog } from "../_components/export-dialog";
 import { PageHeader } from "../_components/page-header";
-import { getOrderRegions, getOrders } from "../actions";
+import { getConsultationSlots, getOrderRegions, getOrders } from "../actions";
+import { ConsultationSlotsPanel } from "./_components/consultation-slots-panel";
 import { OrdersTable } from "./_components/orders-table";
 
 export const metadata: Metadata = { title: "Заказы и заявки" };
@@ -48,7 +49,11 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
     to: stringParam(params.to),
     page: Number(stringParam(params.page)) || 1,
   };
-  const [result, regions] = await Promise.all([getOrders(filters), getOrderRegions()]);
+  const [result, regions, consultationSlots] = await Promise.all([
+    getOrders(filters),
+    getOrderRegions(),
+    getConsultationSlots(),
+  ]);
 
   return (
     <>
@@ -66,6 +71,8 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
       <div className="mb-4">
         <ExportDialog initialReport="orders" />
       </div>
+
+      <ConsultationSlotsPanel slots={consultationSlots} />
 
       <nav className="mb-3 flex gap-1 overflow-x-auto rounded-xl border bg-white p-1" aria-label="Фильтр по статусу">
         <Link

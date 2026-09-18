@@ -9,6 +9,9 @@ import { usePathname } from "next/navigation";
 import { LayoutDashboard, Menu, PackageCheck, ShieldCheck, Tags, TrendingUp, Users, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import type { CrmStatusSnapshot } from "@/server/crm-status";
+
+import { CrmStatusWidget } from "./crm-status-widget";
 
 const navigation = [
   { href: "/dashboard", label: "Дашборд", description: "Аналитика", icon: LayoutDashboard },
@@ -18,7 +21,7 @@ const navigation = [
   { href: "/catalog", label: "Каталог и цены", description: "Внутренний учёт", icon: Tags },
 ];
 
-export function CrmShell({ children }: { children: React.ReactNode }) {
+export function CrmShell({ children, initialStatus }: { children: React.ReactNode; initialStatus: CrmStatusSnapshot }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [desktop, setDesktop] = useState(false);
@@ -176,10 +179,12 @@ export function CrmShell({ children }: { children: React.ReactNode }) {
               <p className="mt-0.5 text-muted-foreground text-xs">Единая база заявок и клиентов</p>
             </div>
           </div>
-          <span className="hidden items-center gap-2 rounded-full border bg-secondary px-3 py-1.5 font-bold text-secondary-foreground text-xs sm:inline-flex">
-            <span className="size-2 rounded-full bg-emerald-500" aria-hidden="true" />
-            Moldova / MDL
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="hidden items-center gap-2 rounded-full border bg-secondary px-3 py-1.5 font-bold text-secondary-foreground text-xs xl:inline-flex">
+              Moldova / MDL
+            </span>
+            <CrmStatusWidget initialSnapshot={initialStatus} />
+          </div>
         </header>
         <main className="min-h-[calc(100dvh-4.5rem)] p-4 md:p-6 xl:p-7">{children}</main>
       </div>

@@ -1,6 +1,8 @@
 import type { OrderStatus, PrismaClient } from "@prisma/client";
 
 import { getPrismaClient } from "../../src/lib/prisma";
+import { releaseConsultationSlotForOrder } from "../consultations/consultation-slots";
+import { processStatusNotification } from "../notifications/customer-status-notifications";
 
 export const ORDER_STATUS_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatus[]>> = {
   NEW: ["PROCESSING", "CANCELLED"],
@@ -36,7 +38,7 @@ export async function transitionOrderStatus(
 ): Promise<OrderStatusTransitionResult> {
   if (!input.orderId && !input.telegramMessageId) return { outcome: "not_found" };
   const now = input.now ?? new Date();
-  return db.$transaction(async (transaction) => {
+  const result = await db.$transaction(async (transaction) => {
     const order = input.orderId
       ? await transaction.order.findUnique({ where: { id: input.orderId }, select: { id: true, status: true } })
       : await transaction.order.findUnique({
@@ -85,6 +87,9 @@ export async function transitionOrderStatus(
         createdAt: now,
       },
     });
+    if (input.nextStatus === "CANCELLED") {
+      await releaseConsultationSlotForOrder(order.id, input.actorKey, "order_cancelled", transaction);
+    }
     return {
       outcome: "updated",
       orderId: order.id,
@@ -92,6 +97,16 @@ export async function transitionOrderStatus(
       status: input.nextStatus,
     } as const;
   });
+  if (result.outcome === "updated") {
+    await processStatusNotification(result.orderId, result.status, db).catch((error: unknown) => {
+      console.error("[customer-notifications] status notification failed", {
+        orderId: result.orderId,
+        status: result.status,
+        errorName: error instanceof Error ? error.name : "UnknownError",
+      });
+    });
+  }
+  return result;
 }
 
 export function transitionSucceeded(result: OrderStatusTransitionResult) {

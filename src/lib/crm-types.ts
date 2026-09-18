@@ -90,6 +90,17 @@ export type OrderView = {
     nextAttemptAt: string;
     lastErrorCode: string | null;
   } | null;
+  customerNotifications: Array<{
+    id: string;
+    status: OrderStatus;
+    state: "PENDING" | "SENDING" | "ACCEPTED" | "FAILED" | "NEEDS_REVIEW";
+    provider: string;
+    attempts: number;
+    cost: number | null;
+    currency: string | null;
+    lastErrorCode: string | null;
+    createdAt: string;
+  }>;
   submitted: {
     firstName: string;
     lastName: string;
@@ -127,10 +138,19 @@ export type ClientView = {
   region: string;
   createdAt: string;
   updatedAt: string;
+  notificationsOptedOut: boolean;
   orderCount: number;
   firstOrderAt: string | null;
   lastOrderAt: string | null;
   totalValue: number;
+  insights: {
+    completedCount: number;
+    repeatClient: boolean;
+    completedValue: number;
+    incompletePriceItems: number;
+    preferredProducts: Array<{ slug: string; name: string; units: number }>;
+    preferredContact: { value: string; count: number } | null;
+  };
   orders: Array<{
     id: string;
     createdAt: string;
@@ -141,6 +161,30 @@ export type ClientView = {
   profileAudits: Array<{
     id: string;
     actor: string;
+    createdAt: string;
+  }>;
+  notes: Array<{
+    id: string;
+    body: string;
+    actor: string;
+    createdAt: string;
+  }>;
+};
+
+export type ConsultationSlotView = {
+  id: string;
+  startsAt: string;
+  endsAt: string;
+  mode: "online" | "offline";
+  state: "OPEN" | "RESERVED" | "CLOSED" | "CANCELLED";
+  reservedOrderId: string | null;
+  createdBy: string;
+  audits: Array<{
+    id: string;
+    actor: string;
+    fromState: string | null;
+    toState: string;
+    reason: string | null;
     createdAt: string;
   }>;
 };

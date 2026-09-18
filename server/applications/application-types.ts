@@ -40,6 +40,7 @@ export type OrderApplicationRecord = ApplicationRecordBase & {
 
 export type ConsultationApplicationRecord = ApplicationRecordBase & {
   type: "consultation";
+  consultationSlotId?: string;
   consultationMode: "online" | "offline";
   consultationDate: string;
   consultationTime: string;
@@ -80,6 +81,6 @@ export type ApplicationServiceResult = {
   delivery: {
     telegram: DeliveryStatus;
   };
-  outcome: "success" | "failure" | "in_progress" | "conflict";
+  outcome: "success" | "failure" | "in_progress" | "conflict" | "slot_unavailable";
   replayed?: boolean;
 };

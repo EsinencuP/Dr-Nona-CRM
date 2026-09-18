@@ -22,11 +22,25 @@ model Client {
   region          String                       // Moldova region from dropdown
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  customerNotificationsOptOutAt DateTime?
 
   orders          Order[]
   profileAudits   ClientProfileAudit[]
+  notes           ClientNote[]
 
   @@index([region])                            // For future "sales by region" reports
+}
+
+model ClientNote {
+  id        String   @id @default(uuid())
+  clientId  String
+  body      String
+  actor     String
+  createdAt DateTime @default(now())
+
+  client    Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, createdAt])
 }
 
 model ClientProfileAudit {
@@ -74,6 +88,21 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum ConsultationSlotState {
+  OPEN
+  RESERVED
+  CLOSED
+  CANCELLED
+}
+
+enum CustomerNotificationState {
+  PENDING
+  SENDING
+  ACCEPTED
+  FAILED
+  NEEDS_REVIEW
+}
+
 // ─── TABLE 2: Order ────────────────────────────────────────────────────────
 // One row per incoming request (order / consultation / masterclass).
 // Status lifecycle: NEW → PROCESSING → DELIVERY → DONE | CANCELLED
@@ -83,6 +112,7 @@ model Order {
   clientId            String
   type                OrderType
   status              OrderStatus @default(NEW)
+  locale              String   @default("ru-MD")
 
   // Optional fields — filled depending on request type
   comment             String?                  // Free-text comment from client
@@ -125,11 +155,69 @@ model Order {
   telegramOutbox      TelegramOutbox?
   statusAudits        OrderStatusAudit[]
   telegramCommandAudits TelegramCommandAudit[]
+  reservedConsultationSlot ConsultationSlot? @relation("ReservedConsultationSlot")
+  customerNotifications CustomerNotification[]
 
   @@index([clientId])                          // Fast lookup of all orders by one client
   @@index([createdAt])                         // For time-range queries (seasonality reports)
   @@index([status, createdAt])                 // For CRM list: filter by status + sort by date
   @@index([utmSource])                         // For marketing channel performance reports
+}
+
+model CustomerNotification {
+  id                String                    @id @default(uuid())
+  orderId           String
+  status            OrderStatus
+  locale            String
+  recipient         String
+  templateKey       String
+  body              String
+  provider          String
+  state             CustomerNotificationState @default(PENDING)
+  attempts          Int                       @default(0)
+  providerMessageId String?                   @unique
+  cost              Float?
+  currency          String?
+  lastErrorCode     String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  order             Order                     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, status])
+  @@index([state, createdAt])
+}
+
+model ConsultationSlot {
+  id              String                @id @default(uuid())
+  startsAt        DateTime              @unique
+  endsAt          DateTime
+  mode            String
+  state           ConsultationSlotState @default(OPEN)
+  reservedOrderId String?               @unique
+  reservedAt      DateTime?
+  createdBy       String
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  reservedOrder   Order?                @relation("ReservedConsultationSlot", fields: [reservedOrderId], references: [id], onDelete: SetNull)
+  audits          ConsultationSlotAudit[]
+
+  @@index([state, startsAt])
+}
+
+model ConsultationSlotAudit {
+  id        String                @id @default(uuid())
+  slotId    String
+  actor     String
+  fromState ConsultationSlotState?
+  toState   ConsultationSlotState
+  reason    String?
+  createdAt DateTime              @default(now())
+
+  slot      ConsultationSlot      @relation(fields: [slotId], references: [id], onDelete: Cascade)
+
+  @@index([slotId, createdAt])
 }
 
 model OrderStatusAudit {

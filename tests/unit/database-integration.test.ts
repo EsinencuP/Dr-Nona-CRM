@@ -16,6 +16,7 @@ import {
   rearmTelegramOutbox,
 } from "../../server/applications/telegram-outbox.js";
 import { updateCanonicalClientProfile } from "../../server/clients/client-profile.js";
+import { chisinauLocalMinute, createConsultationSlot } from "../../server/consultations/consultation-slots.js";
 import {
   createApplicationRateLimitGuard,
   createPrismaRateLimitIncrement,
@@ -122,6 +123,58 @@ describe("database and status integration", () => {
     await expect(db.order.findUnique({ where: { id: orderId } })).resolves.toBeNull();
     await expect(db.client.findUnique({ where: { phoneNormalized: testPhoneNormalized } })).resolves.toBeNull();
   }, 20_000);
+
+  test("reserves one consultation slot once under concurrent submissions and releases it on deletion", async () => {
+    const suffix = `${process.pid}-${Date.now()}`;
+    const startsAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    startsAt.setUTCSeconds(0, 0);
+    const endsAt = new Date(startsAt.getTime() + 60 * 60 * 1000);
+    const slot = await createConsultationSlot({ startsAt, endsAt, mode: "online", actor: "integration-test" }, db);
+    const [eventDate, eventTime] = chisinauLocalMinute(startsAt).split("T");
+    const orderIds = [`test-slot-a-${suffix}`, `test-slot-b-${suffix}`];
+    try {
+      const submissions = await Promise.all(
+        orderIds.map((requestId, index) =>
+          saveApplicationToDb(
+            {
+              requestId,
+              firstName: "Slot",
+              lastName: "Test",
+              phone: `+373 ${index + 6}${runSuffix}`,
+              phoneNormalized: `+373${index + 6}${runSuffix}`,
+              region: "Кишинёв",
+              type: "consultation",
+              consultationMode: "online",
+              consultationSlotId: slot.id,
+              eventDate,
+              eventTime,
+              telegramPayload: `test slot ${requestId}`,
+            },
+            db,
+          ),
+        ),
+      );
+      expect(submissions.filter((submission) => submission.success)).toHaveLength(1);
+      expect(submissions.filter((submission) => !submission.success)).toMatchObject([
+        { disposition: "slot_unavailable" },
+      ]);
+      const created = submissions.find((submission) => submission.success);
+      if (!created?.success) throw new Error("Expected one successful reservation");
+      expect(await db.order.count({ where: { id: { in: orderIds } } })).toBe(1);
+      expect(await db.consultationSlot.findUniqueOrThrow({ where: { id: slot.id } })).toMatchObject({
+        state: "RESERVED",
+        reservedOrderId: created.orderId,
+      });
+      await expect(deleteOrderFromDb(created.orderId, db)).resolves.toBe(true);
+      expect(await db.consultationSlot.findUniqueOrThrow({ where: { id: slot.id } })).toMatchObject({
+        state: "OPEN",
+        reservedOrderId: null,
+      });
+    } finally {
+      for (const orderId of orderIds) await deleteOrderFromDb(orderId, db);
+      await db.consultationSlot.delete({ where: { id: slot.id } });
+    }
+  }, 30_000);
 
   test("preserves submitted contact snapshots and audits explicit profile edits", async () => {
     const suffix = `${process.pid}-${Date.now()}`;

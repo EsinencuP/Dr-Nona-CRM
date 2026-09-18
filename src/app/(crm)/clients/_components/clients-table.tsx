@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 
 import { useRouter } from "next/navigation";
 
-import { Mail, MapPin, Phone, UserRound, Warehouse } from "lucide-react";
+import { Mail, MapPin, NotebookPen, Phone, Repeat2, Sparkles, UserRound, Warehouse } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import type { ClientView } from "@/lib/crm-types";
 
 import { MOLDOVA_REGIONS } from "../../../../../shared/constants/moldova-regions";
 import { StatusBadge } from "../../_components/status-badge";
-import { updateClientProfile } from "../../actions";
+import { addClientNote, setClientNotificationOptOut, updateClientProfile } from "../../actions";
 
 function whatsappHref(phone: string) {
   return `https://wa.me/${phone.replace(/\D/g, "")}`;
@@ -26,6 +26,7 @@ export function ClientsTable({ clients }: { clients: ClientView[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState<ClientView | null>(null);
   const [message, setMessage] = useState("");
+  const [noteMessage, setNoteMessage] = useState("");
   const [pending, startTransition] = useTransition();
 
   function submitProfile(formData: FormData) {
@@ -41,6 +42,34 @@ export function ClientsTable({ clients }: { clients: ClientView[] }) {
       }).then((result) => {
         setMessage(result.message);
         if (result.ok) router.refresh();
+      });
+    });
+  }
+
+  function submitNote(formData: FormData) {
+    if (!selected) return;
+    setNoteMessage("");
+    startTransition(() => {
+      void addClientNote(selected.id, String(formData.get("body") ?? "")).then((result) => {
+        setNoteMessage(result.message);
+        if (result.ok) {
+          setSelected(null);
+          router.refresh();
+        }
+      });
+    });
+  }
+
+  function toggleNotifications() {
+    if (!selected) return;
+    setNoteMessage("");
+    startTransition(() => {
+      void setClientNotificationOptOut(selected.id, !selected.notificationsOptedOut).then((result) => {
+        setNoteMessage(result.message);
+        if (result.ok) {
+          setSelected(null);
+          router.refresh();
+        }
       });
     });
   }
@@ -177,6 +206,51 @@ export function ClientsTable({ clients }: { clients: ClientView[] }) {
                 </SheetDescription>
               </SheetHeader>
               <div className="space-y-5 px-5 pb-6">
+                <section className="rounded-xl border bg-white p-4" aria-labelledby="client-insights-title">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 id="client-insights-title" className="font-extrabold text-sm">
+                        Контекст клиента
+                      </h3>
+                      <p className="mt-1 text-muted-foreground text-xs">
+                        Рассчитано из сохранённой истории, не назначено менеджером.
+                      </p>
+                    </div>
+                    {selected.insights.repeatClient ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 font-bold text-primary text-xs">
+                        <Repeat2 className="size-3.5" aria-hidden="true" />
+                        Постоянный · {selected.insights.completedCount} завершено
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-muted px-3 py-1 font-semibold text-muted-foreground text-xs">
+                        {selected.insights.completedCount} завершено
+                      </span>
+                    )}
+                  </div>
+                  <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg bg-muted/55 p-3">
+                      <dt className="flex items-center gap-1.5 text-muted-foreground text-xs">
+                        <Sparkles className="size-3.5" aria-hidden="true" /> Предпочтительные товары · рассчитано
+                      </dt>
+                      <dd className="mt-2 text-sm">
+                        {selected.insights.preferredProducts.length
+                          ? selected.insights.preferredProducts
+                              .map((product) => `${product.name} × ${product.units}`)
+                              .join("; ")
+                          : "Недостаточно завершённых заказов"}
+                      </dd>
+                    </div>
+                    <div className="rounded-lg bg-muted/55 p-3">
+                      <dt className="text-muted-foreground text-xs">Время связи · рассчитано</dt>
+                      <dd className="mt-2 font-semibold text-sm">
+                        {selected.insights.preferredContact
+                          ? `${selected.insights.preferredContact.value} · указано ${selected.insights.preferredContact.count} раз(а)`
+                          : "Клиент не указывал"}
+                      </dd>
+                    </div>
+                  </dl>
+                </section>
+
                 <form action={submitProfile} className="rounded-xl border bg-muted/35 p-4">
                   <h3 className="font-extrabold text-sm">Канонический профиль</h3>
                   <p className="mt-1 text-muted-foreground text-xs">
@@ -218,6 +292,51 @@ export function ClientsTable({ clients }: { clients: ClientView[] }) {
                   )}
                 </form>
 
+                <section className="rounded-xl border bg-white p-4" aria-labelledby="client-notes-title">
+                  <h3 id="client-notes-title" className="flex items-center gap-2 font-extrabold text-sm">
+                    <NotebookPen className="size-4 text-primary" aria-hidden="true" /> Внутренние заметки
+                  </h3>
+                  <p className="mt-1 text-muted-foreground text-xs">
+                    Доступны только в CRM. Записи неизменяемы и сохраняют автора и время.
+                  </p>
+                  <form action={submitNote} className="mt-3">
+                    <label htmlFor="client-note" className="sr-only">
+                      Новая внутренняя заметка
+                    </label>
+                    <textarea
+                      id="client-note"
+                      name="body"
+                      rows={3}
+                      maxLength={1200}
+                      required
+                      className="w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="Добавить фактический контекст для следующего обращения…"
+                    />
+                    <Button type="submit" className="mt-2" disabled={pending}>
+                      Добавить в журнал
+                    </Button>
+                    {noteMessage ? (
+                      <p className="mt-2 text-sm" role="status">
+                        {noteMessage}
+                      </p>
+                    ) : null}
+                  </form>
+                  {selected.notes.length ? (
+                    <ol className="mt-4 space-y-2">
+                      {selected.notes.map((note) => (
+                        <li key={note.id} className="rounded-lg bg-muted/55 p-3">
+                          <p className="whitespace-pre-wrap text-sm">{note.body}</p>
+                          <p className="mt-2 text-muted-foreground text-xs">
+                            {formatDate(note.createdAt)} · {note.actor}
+                          </p>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="mt-4 text-muted-foreground text-sm">Заметок пока нет.</p>
+                  )}
+                </section>
+
                 <section className="grid grid-cols-2 gap-3">
                   <a
                     href={`tel:${selected.phoneNormalized}`}
@@ -251,10 +370,31 @@ export function ClientsTable({ clients }: { clients: ClientView[] }) {
                     <p className="mt-1 font-extrabold text-2xl">{selected.orderCount}</p>
                   </div>
                   <div className="rounded-xl bg-accent p-4">
-                    <p className="text-accent-foreground text-xs">Сумма по заявкам</p>
+                    <p className="text-accent-foreground text-xs">Завершено на</p>
                     <p className="mt-1 font-extrabold text-accent-foreground text-xl">
                       {formatLei(selected.totalValue)}
                     </p>
+                    {selected.insights.incompletePriceItems ? (
+                      <p className="mt-1 text-[0.68rem] text-accent-foreground/75">
+                        Без цены: {selected.insights.incompletePriceItems} поз.
+                      </p>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="rounded-xl border bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-extrabold text-sm">Статусные SMS</h3>
+                      <p className="mt-1 text-muted-foreground text-xs">
+                        {selected.notificationsOptedOut
+                          ? "Клиент отказался от уведомлений."
+                          : "Явный отказ не зафиксирован."}
+                      </p>
+                    </div>
+                    <Button type="button" variant="outline" onClick={toggleNotifications} disabled={pending}>
+                      {selected.notificationsOptedOut ? "Снять отказ" : "Зафиксировать отказ"}
+                    </Button>
                   </div>
                 </section>
 

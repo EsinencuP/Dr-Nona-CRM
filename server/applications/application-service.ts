@@ -72,6 +72,7 @@ export async function processApplication(
       ...base,
       type: "consultation",
       consultationMode: input.consultationMode,
+      consultationSlotId: input.consultationSlotId,
       consultationDate: input.consultationDate,
       consultationTime: input.consultationTime,
       timezone: "Europe/Chisinau",
@@ -104,6 +105,7 @@ export async function processApplication(
     phoneNormalized: phone.phoneNormalized,
     email: input.email?.trim() || dependencies.extraFields?.email,
     region: input.city,
+    locale: input.locale,
     type: input.type,
     comment: input.comment?.trim() || dependencies.extraFields?.comment,
     preferredCallTime: input.preferredCallTime?.trim() || dependencies.extraFields?.preferredCallTime,
@@ -121,6 +123,7 @@ export async function processApplication(
     eventTime,
     masterclassTopic: input.type === "masterclass" ? input.masterclassTopic : undefined,
     consultationMode: input.type === "consultation" ? input.consultationMode : undefined,
+    consultationSlotId: input.type === "consultation" ? input.consultationSlotId : undefined,
     products:
       record.type === "order"
         ? record.products.map((product) => ({
@@ -160,6 +163,14 @@ export async function processApplication(
         type: record.type,
         delivery: { telegram: "pending" },
         outcome: "conflict",
+      };
+    }
+    if (dbResult.disposition === "slot_unavailable") {
+      return {
+        requestId,
+        type: record.type,
+        delivery: { telegram: "pending" },
+        outcome: "slot_unavailable",
       };
     }
     return {

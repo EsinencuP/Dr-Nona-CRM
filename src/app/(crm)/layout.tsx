@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
 
+import { getCrmStatusSnapshot } from "@/server/crm-status";
+
 import { CrmShell } from "./_components/crm-shell";
 
-export default function CrmLayout({ children }: Readonly<{ children: ReactNode }>) {
-  return <CrmShell>{children}</CrmShell>;
+export default async function CrmLayout({ children }: Readonly<{ children: ReactNode }>) {
+  const initialStatus = await getCrmStatusSnapshot();
+  return <CrmShell initialStatus={initialStatus}>{children}</CrmShell>;
 }

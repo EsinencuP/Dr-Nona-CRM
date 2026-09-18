@@ -2,6 +2,7 @@ import type { OrderStatus, OrderType, PrismaClient } from "@prisma/client";
 import { ApplicationSubmissionState, Prisma } from "@prisma/client";
 
 import { getPrismaClient } from "../../src/lib/prisma";
+import { chisinauLocalMinute, releaseConsultationSlotForOrder } from "../consultations/consultation-slots";
 
 function databaseFailureMetadata(error: unknown) {
   return {
@@ -22,6 +23,7 @@ export type DbWriteInput = {
   phoneNormalized: string;
   email?: string;
   region: string;
+  locale?: "ru-MD" | "ro-MD";
   type: OrderType;
   comment?: string;
   preferredCallTime?: string;
@@ -29,6 +31,7 @@ export type DbWriteInput = {
   eventTime?: string;
   masterclassTopic?: string;
   consultationMode?: string;
+  consultationSlotId?: string;
   utmSource?: string;
   utmMedium?: string;
   utmCampaign?: string;
@@ -52,7 +55,7 @@ export type IdempotencyWriteContext = {
 
 export type DbWriteResult =
   | { success: true; orderId: string; disposition: "created" | "retry" | "replay" | "in_progress" }
-  | { success: false; disposition: "conflict" | "failure"; error: string };
+  | { success: false; disposition: "conflict" | "slot_unavailable" | "failure"; error: string };
 
 export type { OrderStatus };
 
@@ -64,6 +67,7 @@ export async function deleteOrderFromDb(orderId: string, db: PrismaClient = getD
   if (!existing) return false;
 
   await db.$transaction(async (transaction) => {
+    await releaseConsultationSlotForOrder(orderId, "crm:delete", "order_deleted", transaction);
     await transaction.orderItem.deleteMany({ where: { orderId } });
     await transaction.order.delete({ where: { id: orderId } });
 
@@ -84,6 +88,22 @@ export async function saveApplicationToDb(
 ): Promise<DbWriteResult> {
   try {
     const order = await db.$transaction(async (transaction) => {
+      const consultationSlot = input.consultationSlotId
+        ? await transaction.consultationSlot.findUnique({ where: { id: input.consultationSlotId } })
+        : null;
+      if (input.consultationSlotId) {
+        const local = consultationSlot ? chisinauLocalMinute(consultationSlot.startsAt) : "";
+        const [slotDate, slotTime] = local.split("T");
+        if (
+          consultationSlot?.state !== "OPEN" ||
+          consultationSlot.startsAt <= (idempotency?.now ?? new Date()) ||
+          consultationSlot.mode !== input.consultationMode ||
+          slotDate !== input.eventDate ||
+          slotTime !== input.eventTime
+        ) {
+          throw new Error("CONSULTATION_SLOT_UNAVAILABLE");
+        }
+      }
       const catalogPrices = input.products?.length
         ? await transaction.productCatalog.findMany({
             where: { slug: { in: input.products.map((product) => product.slug) } },
@@ -110,6 +130,7 @@ export async function saveApplicationToDb(
           clientId: client.id,
           type: input.type,
           status: "NEW",
+          locale: input.locale ?? "ru-MD",
           comment: input.comment ?? null,
           preferredCallTime: input.preferredCallTime ?? null,
           eventDate: input.eventDate ?? null,
@@ -153,6 +174,22 @@ export async function saveApplicationToDb(
           },
         });
       }
+      if (consultationSlot) {
+        const reserved = await transaction.consultationSlot.updateMany({
+          where: { id: consultationSlot.id, state: "OPEN", reservedOrderId: null },
+          data: { state: "RESERVED", reservedOrderId: createdOrder.id, reservedAt: idempotency?.now ?? new Date() },
+        });
+        if (reserved.count !== 1) throw new Error("CONSULTATION_SLOT_UNAVAILABLE");
+        await transaction.consultationSlotAudit.create({
+          data: {
+            slotId: consultationSlot.id,
+            actor: "public-application",
+            fromState: "OPEN",
+            toState: "RESERVED",
+            reason: `order:${createdOrder.id}`,
+          },
+        });
+      }
       await transaction.telegramOutbox.create({
         data: {
           orderId: createdOrder.id,
@@ -164,6 +201,9 @@ export async function saveApplicationToDb(
 
     return { success: true, orderId: order.id, disposition: "created" };
   } catch (error) {
+    if (error instanceof Error && error.message === "CONSULTATION_SLOT_UNAVAILABLE") {
+      return { success: false, disposition: "slot_unavailable", error: error.message };
+    }
     if (idempotency && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       const existing = await db.applicationSubmission.findUnique({ where: { keyHash: idempotency.keyHash } });
       if (existing) {
