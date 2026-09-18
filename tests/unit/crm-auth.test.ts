@@ -27,10 +27,12 @@ describe("CRM Basic Auth boundary", () => {
     expect(evaluateCrmBasicAuth(null, configured, "production")).toBe("unauthorized");
   });
 
-  test("keeps only the guarded application and Telegram endpoints public", () => {
+  test("keeps only the guarded application, consultation and Telegram endpoints public", () => {
     expect(isPublicCrmApiPath("/api/applications")).toBe(true);
+    expect(isPublicCrmApiPath("/api/consultation-slots")).toBe(true);
     expect(isPublicCrmApiPath("/api/telegram-webhook")).toBe(true);
     expect(isPublicCrmApiPath("/api/applications/admin")).toBe(false);
+    expect(isPublicCrmApiPath("/api/consultation-slots/admin")).toBe(false);
     expect(isPublicCrmApiPath("/dashboard")).toBe(false);
     expect(isPublicCrmApiPath("/orders")).toBe(false);
   });
