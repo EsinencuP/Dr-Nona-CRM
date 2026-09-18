@@ -17,7 +17,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { DEFAULT_REPORT_COLUMNS, REPORT_COLUMNS, REPORT_LABELS, type ReportType } from "@/lib/export-spec";
 
-export function ExportDialog({ initialReport = "orders" }: { initialReport?: ReportType }) {
+export function ExportDialog({
+  initialReport = "orders",
+  contextLabel,
+}: {
+  initialReport?: ReportType;
+  contextLabel?: string;
+}) {
   const [report, setReport] = useState<ReportType>(initialReport);
   const [columns, setColumns] = useState<string[]>([...DEFAULT_REPORT_COLUMNS[initialReport]]);
   const [from, setFrom] = useState("");
@@ -87,7 +93,8 @@ export function ExportDialog({ initialReport = "orders" }: { initialReport?: Rep
         <DialogHeader>
           <DialogTitle>Выгрузка отчёта в Excel</DialogTitle>
           <DialogDescription>
-            Выберите отчёт, период и столбцы. Файл создаётся для скачивания и не хранится на сервере.
+            {contextLabel ? `Раздел «${contextLabel}». ` : ""}Выберите тип отчёта, период и столбцы. Файл создаётся для
+            скачивания и не хранится на сервере.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={download} className="space-y-4">

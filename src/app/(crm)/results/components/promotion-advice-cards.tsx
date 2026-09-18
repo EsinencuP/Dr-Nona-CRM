@@ -1,9 +1,15 @@
 "use client";
 
+import { useState } from "react";
+
+import Link from "next/link";
+
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 
 import type { ResultsData } from "../../../../../server/analytics/results-calculations";
 import { amount, rate } from "./format";
+import { filterPromotionRecommendations, promotionCategories } from "./promotion-filter";
 
 const calendarDate = new Intl.DateTimeFormat("ru-MD", {
   day: "numeric",
@@ -12,12 +18,49 @@ const calendarDate = new Intl.DateTimeFormat("ru-MD", {
   timeZone: "Europe/Chisinau",
 });
 
-export function PromotionAdviceCards({ recommendations }: { recommendations: ResultsData["recommendations"] }) {
+function catalogHref(name: string) {
+  return `/catalog?${new URLSearchParams({ search: name }).toString()}`;
+}
+
+export function PromotionAdviceCards({
+  recommendations,
+  skus,
+}: {
+  recommendations: ResultsData["recommendations"];
+  skus: ResultsData["skus"];
+}) {
+  const [category, setCategory] = useState("");
+  const categories = promotionCategories(skus);
+  const { masterclass, volume, seasonal } = filterPromotionRecommendations(recommendations, skus, category);
+
   return (
     <section aria-labelledby="promotion-heading" className="mt-6">
-      <h2 id="promotion-heading" className="mb-3 font-bold text-xl">
-        Советы по продвижению и мероприятиям
-      </h2>
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 id="promotion-heading" className="font-bold text-xl">
+            Советы по продвижению и мероприятиям
+          </h2>
+          <p className="mt-1 text-muted-foreground text-sm">
+            Каждая товарная рекомендация ведёт к существующей записи каталога.
+          </p>
+        </div>
+        <label htmlFor="promotion-category" className="grid gap-1 font-semibold text-xs">
+          Категория товаров
+          <NativeSelect
+            id="promotion-category"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+            className="w-full sm:w-64"
+          >
+            <NativeSelectOption value="">Все категории</NativeSelectOption>
+            {categories.map((item) => (
+              <NativeSelectOption key={item} value={item}>
+                {item}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </label>
+      </div>
       <div className="grid gap-3 xl:grid-cols-3">
         <Card>
           <CardHeader>
@@ -27,11 +70,13 @@ export function PromotionAdviceCards({ recommendations }: { recommendations: Res
             </p>
           </CardHeader>
           <CardContent>
-            {recommendations.masterclass.length ? (
+            {masterclass.length ? (
               <ul className="space-y-4">
-                {recommendations.masterclass.map((sku) => (
+                {masterclass.map((sku) => (
                   <li key={sku.slug}>
-                    <strong>{sku.name}</strong>
+                    <Link href={catalogHref(sku.name)} className="font-bold underline-offset-4 hover:underline">
+                      {sku.name}
+                    </Link>
                     <p className="mt-1 text-muted-foreground text-xs">
                       Маржа: {amount(sku.margin, true)} · {rate(sku.velocity)} шт./мес.
                     </p>
@@ -52,13 +97,13 @@ export function PromotionAdviceCards({ recommendations }: { recommendations: Res
             <p className="text-muted-foreground text-xs">Три лидера продаж за выбранный период.</p>
           </CardHeader>
           <CardContent>
-            {recommendations.volume.length ? (
+            {volume.length ? (
               <ol className="space-y-4">
-                {recommendations.volume.map((sku, index) => (
+                {volume.map((sku, index) => (
                   <li key={sku.slug}>
-                    <strong>
+                    <Link href={catalogHref(sku.name)} className="font-bold underline-offset-4 hover:underline">
                       {index + 1}. {sku.name}
-                    </strong>
+                    </Link>
                     <p className="mt-1 text-muted-foreground text-xs">
                       {amount(sku.units)} · Проверьте остаток и срок следующей поставки.
                     </p>
@@ -79,7 +124,7 @@ export function PromotionAdviceCards({ recommendations }: { recommendations: Res
           </CardHeader>
           <CardContent>
             <ul className="space-y-4">
-              {recommendations.seasonal.map((advice) => (
+              {seasonal.map((advice) => (
                 <li key={advice.id}>
                   <strong>{advice.label}</strong>
                   {advice.due && (
@@ -92,20 +137,31 @@ export function PromotionAdviceCards({ recommendations }: { recommendations: Res
                     {calendarDate.format(new Date(advice.prepareTo))}. Сезон с{" "}
                     {calendarDate.format(new Date(advice.target))}.
                   </p>
-                  <p className="mt-1 text-xs">
-                    {advice.productNames.slice(0, 3).join(", ")}
-                    {advice.productNames.length > 3 ? ` и ещё ${advice.productNames.length - 3}` : ""}. Используйте
-                    только утверждённые описания.
-                  </p>
+                  <ul className="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-xs">
+                    {advice.productNames.slice(0, 3).map((name) => (
+                      <li key={name}>
+                        <Link href={catalogHref(name)} className="underline-offset-4 hover:underline">
+                          {name}
+                        </Link>
+                      </li>
+                    ))}
+                    {advice.productNames.length > 3 ? <li>и ещё {advice.productNames.length - 3}</li> : null}
+                  </ul>
+                  <p className="mt-1 text-xs">Используйте только утверждённые описания.</p>
                 </li>
               ))}
             </ul>
-            {recommendations.seasonal.length === 0 && (
-              <p className="text-muted-foreground">В каталоге нет товаров для сезонных правил.</p>
-            )}
+            {seasonal.length === 0 ? (
+              <p className="text-muted-foreground">Для выбранной категории сезонных рекомендаций нет.</p>
+            ) : null}
           </CardContent>
         </Card>
       </div>
+      {masterclass.length === 0 && volume.length === 0 && seasonal.length === 0 ? (
+        <p role="status" className="mt-3 rounded-xl border bg-white p-4 text-muted-foreground text-sm">
+          Для выбранной категории рекомендаций нет. Выберите другую категорию или покажите весь каталог.
+        </p>
+      ) : null}
     </section>
   );
 }

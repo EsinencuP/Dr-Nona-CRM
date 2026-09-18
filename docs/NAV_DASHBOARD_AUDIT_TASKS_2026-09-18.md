@@ -3,7 +3,7 @@
 **Created:** 2026-09-18  
 **Source audit:** `C:\Users\User.DESKTOP\.gemini\antigravity\brain\7737fd0e-b347-42b1-a5fd-897f24963d07\nav_dashboard_audit.md`  
 **Repository:** `EsinencuP/Dr-Nona-CRM`  
-**State:** execution active. Blocks 0–1 completed with scoped verification on 2026-09-18; Block 2 has not started.
+**State:** execution active. Blocks 0–2 completed on 2026-09-18; Block 3 remains separately gated.
 
 ## Execution ledger
 
@@ -11,10 +11,10 @@
 |---|---:|---|---|---:|
 | 0. Contract and evidence | 1–3 | `PASS` | [`NAV_DASHBOARD_BLOCK_0_2026-09-18.md`](NAV_DASHBOARD_BLOCK_0_2026-09-18.md) | 4 |
 | 1. Status and dashboard | 4–10 | `PASS` (scoped verification) | [`NAV_DASHBOARD_BLOCK_1_2026-09-18.md`](NAV_DASHBOARD_BLOCK_1_2026-09-18.md) | 11 |
-| 2. Results information architecture | 11–17 | `OPEN` | Not started | 11 |
+| 2. Results information architecture | 11–17 | `PASS` | [`NAV_DASHBOARD_BLOCK_2_2026-09-18.md`](NAV_DASHBOARD_BLOCK_2_2026-09-18.md) | 18, only after explicit authorization |
 | 3. Administrative infrastructure | 18–26 | `DECISION_REQUIRED` / `BLOCKED` | Separate authorization remains required | 18 |
 
-Tasks 1–10 are complete. “Scoped verification” means the changed status/dashboard surface passed its focused tests, formatting and local browser check. Full repository checks were intentionally not run at the owner’s request. Two pre-existing database-migration mismatches in unrelated Block 5 work still prevent `/orders` and `/clients` from rendering against the current local database; they are recorded in both Block 0 and Block 1 evidence and do not change the route contract or the Block 1 implementation result.
+Tasks 1–17 are complete. Block 1 used the scoped verification requested at that stage. Block 2 passed its focused calculations, URL-state, export, route-contract and presentation checks plus responsive browser review. The former Block 5 migration mismatch was resolved separately before Block 2 started.
 
 ## Fixed architecture contract
 

@@ -15,7 +15,7 @@ export function LogisticsForecastTable({ skus }: { skus: ResultsData["skus"] }) 
     `${sku.name} ${sku.sku} ${sku.slug}`.toLocaleLowerCase("ru").includes(search.trim().toLocaleLowerCase("ru")),
   );
   return (
-    <Card className="mt-5 min-w-0">
+    <Card className="min-w-0">
       <CardHeader>
         <h2 className="font-bold text-xl">Прогноз поставок и логистика</h2>
         <p className="text-muted-foreground">
