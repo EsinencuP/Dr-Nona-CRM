@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 const appRoot = join(process.cwd(), "src", "app");
-const approvedRoutes = ["/catalog", "/clients", "/dashboard", "/orders", "/results"];
+const approvedRoutes = ["/catalog", "/clients", "/dashboard", "/orders", "/results", "/reviews"];
 
 function pageFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -23,7 +23,7 @@ function routeFor(file: string) {
 }
 
 describe("CRM page-route contract", () => {
-  test("exposes only the root redirect and five approved CRM pages", () => {
+  test("exposes only the root redirect and six approved CRM pages", () => {
     const routes = pageFiles(appRoot).map(routeFor).sort();
     expect(routes).toEqual(["/", ...approvedRoutes]);
     expect(readFileSync(join(appRoot, "page.tsx"), "utf8")).toContain('redirect("/dashboard")');

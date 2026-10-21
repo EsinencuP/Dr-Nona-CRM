@@ -6,7 +6,17 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { LayoutDashboard, Menu, PackageCheck, ShieldCheck, Tags, TrendingUp, Users, X } from "lucide-react";
+import {
+  LayoutDashboard,
+  Menu,
+  MessageSquare,
+  PackageCheck,
+  ShieldCheck,
+  Tags,
+  TrendingUp,
+  Users,
+  X,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { CrmStatusSnapshot } from "@/server/crm-status";
@@ -14,6 +24,7 @@ import type { CrmStatusSnapshot } from "@/server/crm-status";
 import { CrmStatusWidget } from "./crm-status-widget";
 
 const navigation = [
+  { href: "/reviews", label: "Отзывы", description: "Модерация и история", icon: MessageSquare },
   { href: "/dashboard", label: "Дашборд", description: "Аналитика", icon: LayoutDashboard },
   { href: "/results", label: "Результаты", description: "Продажи и поставки", icon: TrendingUp },
   { href: "/orders", label: "Заказы и заявки", description: "Работа менеджера", icon: PackageCheck },

@@ -24,7 +24,10 @@
     "sync:catalog": "node scripts/sync-shared-data.mjs",
     "demo:analytics:plan": "node scripts/seed-demo-analytics.mjs --dry-run",
     "demo:analytics:seed": "node scripts/seed-demo-analytics.mjs",
-    "demo:analytics:cleanup": "node scripts/seed-demo-analytics.mjs --cleanup"
+    "demo:analytics:cleanup": "node scripts/seed-demo-analytics.mjs --cleanup",
+    "demo:reviews:plan": "node scripts/seed-demo-reviews.mjs --dry-run",
+    "demo:reviews:seed": "node scripts/seed-demo-reviews.mjs",
+    "demo:reviews:cleanup": "node scripts/seed-demo-reviews.mjs --cleanup"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

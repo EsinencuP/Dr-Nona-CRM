@@ -27,6 +27,9 @@ export function evaluateCrmBasicAuth(
 
 export function isPublicCrmApiPath(pathname: string) {
   return (
-    pathname === "/api/applications" || pathname === "/api/consultation-slots" || pathname === "/api/telegram-webhook"
+    pathname === "/api/applications" ||
+    pathname === "/api/consultation-slots" ||
+    pathname === "/api/reviews" ||
+    pathname === "/api/telegram-webhook"
   );
 }

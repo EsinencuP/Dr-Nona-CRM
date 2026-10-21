@@ -8,6 +8,44 @@ datasource db {
   directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model Review {
+  id                String       @id @default(uuid())
+  authorName        String
+  body              String
+  productSlug       String?
+  locale            String
+  status            ReviewStatus @default(PENDING)
+  version           Int          @default(0)
+  consentAcceptedAt DateTime
+  createdAt         DateTime     @default(now())
+  moderatedAt       DateTime?
+  moderatedBy       String?
+  idempotencyKey    String       @unique
+  payloadHash       String
+  moderationAudits  ReviewModerationAudit[]
+
+  @@index([status, createdAt, id])
+  @@index([productSlug, status, createdAt, id])
+}
+
+model ReviewModerationAudit {
+  id         String       @id @default(uuid())
+  reviewId   String
+  fromStatus ReviewStatus
+  toStatus   ReviewStatus
+  actor      String
+  createdAt  DateTime     @default(now())
+  review     Review       @relation(fields: [reviewId], references: [id], onDelete: Restrict)
+
+  @@index([reviewId, createdAt])
+}
+
 // ─── TABLE 1: Client ───────────────────────────────────────────────────────
 // One row per unique customer. Deduplication key = phoneNormalized.
 // When a new order arrives with the same phoneNormalized, we UPSERT:

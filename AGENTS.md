@@ -4,13 +4,14 @@ This repository is the autonomous Next.js 16 internal CRM and application backen
 
 ## Product boundaries
 
-- Keep five working routes: `/dashboard`, `/results`, `/orders`, `/clients`, and `/catalog` (results explicitly authorized on 2026-09-12).
+- Keep six working routes: `/dashboard`, `/results`, `/orders`, `/clients`, `/catalog`, and `/reviews` (results authorized on 2026-09-12; review moderation authorized on 2026-10-21).
 - Do not restore demo routes or template brands.
 - Internal prices must never be exposed by the public Vite application.
 - Do not invent client, order, attribution, price, or profitability data.
 - Treat all Server Actions as untrusted entry points and validate every mutation.
 - Production access must fail closed when CRM credentials are absent.
 - Keep `/api/applications` public only through its validation, origin and rate-limit guards.
+- Keep `/api/reviews` public only through its signed catalogue proxy, exact origin checks and validation; writes are rate-limited and public reads expose only approved reviews.
 - Keep `/api/telegram-webhook` public only through Telegram's secret-token verification.
 
 ## Architecture
