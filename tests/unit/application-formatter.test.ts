@@ -50,7 +50,7 @@ describe("application formatter", () => {
         "1. First × 3 шт. — SKU 001",
         "2. Second — SKU не указан",
         "",
-        "ID заявки: request-123",
+        "ID заказа: request-123",
         "Ref: order:request-123",
         "Получено: 19.06.2030, 11:30:00",
         "Источник: сайт Dr. Nona Moldova",
@@ -142,4 +142,22 @@ describe("replaceStatus", () => {
   test("does not alter a message without a lifecycle status", () => {
     expect(replaceAnyStatus("Some message", STATUS_PROCESSING)).toBeNull();
   });
+});
+
+test("order notifications include product links and use order wording", () => {
+  const message = formatTelegramApplication({
+    ...common,
+    type: "order",
+    products: [
+      {
+        slug: "lord-deodorant",
+        officialName: "Deodorant ( LORD )",
+        sku: "324001",
+        url: "https://catalog.example/ru/product/lord-deodorant",
+      },
+    ],
+  });
+  expect(message).toContain("НОВЫЙ ЗАКАЗ");
+  expect(message).toContain("ID заказа: request-123");
+  expect(message).toContain("https://catalog.example/ru/product/lord-deodorant");
 });

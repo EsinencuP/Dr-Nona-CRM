@@ -49,7 +49,8 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
       return jsonResponse({ ok: false, code: "SERVICE_UNAVAILABLE" }, 503);
     }
     const environment = environmentResult.value;
-    if (!requestOriginIsAllowed(request, environment.allowedOrigins)) {
+    const catalogueOrigin = request.headers.get("origin");
+    if (!catalogueOrigin || !requestOriginIsAllowed(request, environment.allowedOrigins)) {
       return jsonResponse({ ok: false, code: "FORBIDDEN" }, 403);
     }
     const proxyVerification = await (dependencies.verifyProxy ?? verifyApplicationProxyRequest)(
@@ -78,6 +79,12 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
     if (!body.success) {
       return jsonResponse({ ok: false, code: body.code }, body.status);
     }
+    if (!body.value || typeof body.value !== "object" || !("type" in body.value) || body.value.type !== "order") {
+      return jsonResponse(
+        { ok: false, code: "VALIDATION_ERROR", fieldErrors: { type: "Принимаются только заказы выбранных товаров" } },
+        400,
+      );
+    }
     const validation = validateApplicationInput(body.value, {
       allowedProductSlugs: new Set(productsBySlug.keys()),
     });
@@ -91,6 +98,8 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
         400,
       );
     }
+    const orderInput = validation.data;
+    if (orderInput.type !== "order") return jsonResponse({ ok: false, code: "VALIDATION_ERROR" }, 400);
     const idempotencyKey = request.headers.get("idempotency-key")?.trim();
     if (!idempotencyKey || idempotencyKey.length > 128 || !/^[a-zA-Z0-9:_-]+$/u.test(idempotencyKey)) {
       return jsonResponse(
@@ -105,9 +114,17 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
       );
     }
     const serviceResult = await (dependencies.process ?? processApplication)(
-      validation.data,
+      orderInput,
       {
-        productsBySlug,
+        productsBySlug: new Map(
+          [...productsBySlug].map(([slug, product]) => [
+            slug,
+            {
+              ...product,
+              url: new URL(`/${orderInput.locale === "ro-MD" ? "ro" : "ru"}/product/${slug}`, catalogueOrigin).href,
+            },
+          ]),
+        ),
         sendTelegram: (_record, message) =>
           sendTelegramApplication(message, {
             botToken: environment.telegramBotToken,
@@ -127,27 +144,19 @@ export function createApplicationsHandler(dependencies: ApplicationsHandlerDepen
         { limit: 1 },
       ).catch(() => undefined);
     }
-    const responseBody = {
-      ok: serviceResult.outcome !== "failure",
-      requestId: serviceResult.requestId,
-      ...(serviceResult.outcome === "failure" ? { code: "DELIVERY_FAILED" } : {}),
-      delivery: serviceResult.delivery,
-    };
-    if (serviceResult.outcome === "success")
-      return jsonResponse({ ...responseBody, replayed: serviceResult.replayed ?? false }, 201);
     if (serviceResult.outcome === "conflict") {
       return jsonResponse({ ok: false, code: "IDEMPOTENCY_CONFLICT" }, 409);
     }
-    if (serviceResult.outcome === "slot_unavailable") {
-      return jsonResponse({ ok: false, code: "CONSULTATION_SLOT_UNAVAILABLE" }, 409);
-    }
-    if (serviceResult.outcome === "in_progress") {
+    if (serviceResult.accepted === true) {
       return jsonResponse(
-        { ok: true, code: "REQUEST_ACCEPTED", requestId: serviceResult.requestId, delivery: serviceResult.delivery },
-        202,
         {
-          "Retry-After": "30",
+          ok: true,
+          accepted: true,
+          requestId: serviceResult.requestId,
+          delivery: serviceResult.delivery,
+          replayed: serviceResult.replayed ?? false,
         },
+        serviceResult.delivery.telegram === "sent" ? 201 : 202,
       );
     }
     return jsonResponse({ ok: false, code: "DELIVERY_FAILED", requestId: serviceResult.requestId }, 502);

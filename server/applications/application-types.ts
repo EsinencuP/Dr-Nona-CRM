@@ -4,6 +4,7 @@ export type ApplicationProduct = {
   slug: string;
   officialName: string;
   sku: string;
+  url?: string;
   quantity?: number;
 };
 
@@ -76,6 +77,8 @@ export type ProviderResult =
 export type DeliveryStatus = "sent" | "failed" | "pending";
 
 export type ApplicationServiceResult = {
+  /** Present only after a committed CRM order transaction or verified replay. */
+  accepted?: true;
   requestId: string;
   type: ApplicationInput["type"];
   delivery: {

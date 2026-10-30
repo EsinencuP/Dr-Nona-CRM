@@ -78,9 +78,20 @@ export function formatTelegramApplication(record: ApplicationRecord) {
     const products = record.products.map((product, index) => {
       const quantity = product.quantity && product.quantity > 1 ? ` × ${product.quantity} шт.` : "";
       const sku = product.sku ? `SKU ${product.sku}` : "SKU не указан";
-      return `${index + 1}. ${product.officialName}${quantity} — ${sku}`;
+      return `${index + 1}. ${product.officialName}${quantity} — ${sku}${product.url ? `\n${product.url}` : ""}`;
     });
-    return ["🛒 НОВЫЙ ЗАКАЗ", "", ...common, "", "Товары:", ...products, "", ...footer, "", STATUS_PENDING].join("\n");
+    return [
+      "🛒 НОВЫЙ ЗАКАЗ",
+      "",
+      ...common,
+      "",
+      "Товары:",
+      ...products,
+      "",
+      ...footer.map((line) => line.replace("ID заявки:", "ID заказа:")),
+      "",
+      STATUS_PENDING,
+    ].join("\n");
   }
 
   if (record.type === "masterclass") {

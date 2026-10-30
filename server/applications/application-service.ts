@@ -1,12 +1,12 @@
-import type { ApplicationInput } from "../../shared/applications/application-schema";
+import type { OrderApplicationInput } from "../../shared/applications/application-schema";
 import { normalizePhone } from "../../shared/applications/application-schema";
 import { type DbWriteInput, saveApplicationToDb } from "./application-db";
 import { createApplicationIdempotency } from "./application-idempotency";
 import type {
   ApplicationExtraFields,
   ApplicationProduct,
-  ApplicationRecord,
   ApplicationServiceResult,
+  OrderApplicationRecord,
   ProviderResult,
 } from "./application-types";
 import { formatTelegramApplication } from "./format-application";
@@ -15,7 +15,7 @@ import { randomUUID } from "node:crypto";
 
 export type ApplicationServiceDependencies = {
   productsBySlug: ReadonlyMap<string, ApplicationProduct>;
-  sendTelegram: (record: ApplicationRecord, message: string) => Promise<ProviderResult>;
+  sendTelegram: (record: OrderApplicationRecord, message: string) => Promise<ProviderResult>;
   createRequestId?: () => string;
   now?: () => Date;
   logger?: (metadata: Record<string, unknown>) => void;
@@ -25,7 +25,7 @@ export type ApplicationServiceDependencies = {
 };
 
 export async function processApplication(
-  input: ApplicationInput,
+  input: OrderApplicationInput,
   dependencies: ApplicationServiceDependencies,
   context?: { idempotencyKey: string },
 ): Promise<ApplicationServiceResult> {
@@ -44,58 +44,23 @@ export async function processApplication(
     locale: input.locale,
     submittedAt,
   };
-  const quantitiesBySlug =
-    input.type === "order" ? new Map(input.items?.map((item) => [item.slug, item.quantity])) : undefined;
-  if (input.type === "order" && input.items === undefined) {
+  const quantitiesBySlug = new Map(input.items?.map((item) => [item.slug, item.quantity]));
+  if (input.items === undefined) {
     dependencies.logger?.({
       event: "application.contract.legacy_order_items",
       requestId,
       fallbackQuantity: 1,
     });
   }
-  let record: ApplicationRecord;
-  if (input.type === "order") {
-    record = {
-      ...base,
-      type: "order",
-      products: input.productSlugs.map((slug) => {
-        const product = dependencies.productsBySlug.get(slug);
-        if (!product) throw new Error("Validated product is unavailable");
-        return {
-          ...product,
-          quantity: quantitiesBySlug?.get(slug) ?? 1,
-        };
-      }),
-    };
-  } else if (input.type === "consultation") {
-    record = {
-      ...base,
-      type: "consultation",
-      consultationMode: input.consultationMode,
-      consultationSlotId: input.consultationSlotId,
-      consultationDate: input.consultationDate,
-      consultationTime: input.consultationTime,
-      timezone: "Europe/Chisinau",
-    };
-  } else {
-    record = {
-      ...base,
-      type: "masterclass",
-      masterclassTopic: input.masterclassTopic,
-      eventDate: input.eventDate,
-      eventTime: input.eventTime,
-      timezone: "Europe/Chisinau",
-    };
-  }
-  let eventDate: string | undefined;
-  let eventTime: string | undefined;
-  if (input.type === "consultation") {
-    eventDate = input.consultationDate;
-    eventTime = input.consultationTime;
-  } else if (input.type === "masterclass") {
-    eventDate = input.eventDate;
-    eventTime = input.eventTime;
-  }
+  let record: OrderApplicationRecord = {
+    ...base,
+    type: "order",
+    products: input.productSlugs.map((slug) => {
+      const product = dependencies.productsBySlug.get(slug);
+      if (!product) throw new Error("Validated product is unavailable");
+      return { ...product, quantity: quantitiesBySlug.get(slug) ?? 1 };
+    }),
+  };
   const message = formatTelegramApplication(record);
   const dbInput: DbWriteInput = {
     requestId,
@@ -119,18 +84,7 @@ export async function processApplication(
       : (input.sessionHistory ?? dependencies.extraFields?.sessionHistory),
     attribution: input.attribution,
     telegramPayload: message,
-    eventDate,
-    eventTime,
-    masterclassTopic: input.type === "masterclass" ? input.masterclassTopic : undefined,
-    consultationMode: input.type === "consultation" ? input.consultationMode : undefined,
-    consultationSlotId: input.type === "consultation" ? input.consultationSlotId : undefined,
-    products:
-      record.type === "order"
-        ? record.products.map((product) => ({
-            slug: product.slug,
-            quantity: product.quantity ?? 1,
-          }))
-        : undefined,
+    products: record.products.map((product) => ({ slug: product.slug, quantity: product.quantity ?? 1 })),
   };
   const idempotency = context
     ? createApplicationIdempotency(input, context.idempotencyKey, new Date(submittedAt))
@@ -165,14 +119,6 @@ export async function processApplication(
         outcome: "conflict",
       };
     }
-    if (dbResult.disposition === "slot_unavailable") {
-      return {
-        requestId,
-        type: record.type,
-        delivery: { telegram: "pending" },
-        outcome: "slot_unavailable",
-      };
-    }
     return {
       requestId,
       type: record.type,
@@ -182,6 +128,7 @@ export async function processApplication(
   }
   if (dbResult.disposition === "replay") {
     return {
+      accepted: true,
       requestId: dbResult.orderId,
       type: record.type,
       delivery: { telegram: "sent" },
@@ -191,6 +138,7 @@ export async function processApplication(
   }
   if (dbResult.disposition === "in_progress") {
     return {
+      accepted: true,
       requestId: dbResult.orderId,
       type: record.type,
       delivery: { telegram: "pending" },
@@ -215,5 +163,5 @@ export async function processApplication(
     }),
     durationMs: Date.now() - startedAt,
   });
-  return { requestId: activeRequestId, type: record.type, delivery, outcome: "success" };
+  return { accepted: true, requestId: activeRequestId, type: record.type, delivery, outcome: "success" };
 }

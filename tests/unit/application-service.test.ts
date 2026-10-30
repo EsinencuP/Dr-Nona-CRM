@@ -2,10 +2,9 @@ import { describe, expect, test, vi } from "vitest";
 
 import { type ApplicationServiceDependencies, processApplication } from "../../server/applications/application-service";
 import type { ProviderResult } from "../../server/applications/application-types";
-import type { ApplicationInput } from "../../shared/applications/application-schema";
-import { MASTERCLASS_TOPICS } from "../../shared/constants/masterclass-topics";
+import type { OrderApplicationInput } from "../../shared/applications/application-schema";
 
-const input: ApplicationInput = {
+const input: OrderApplicationInput = {
   locale: "ru-MD",
   type: "order",
   firstName: "Ana",
@@ -72,6 +71,7 @@ describe("application service", () => {
   ])("returns %s for Telegram result", async (outcome, telegram) => {
     const result = await processApplication(input, dependencies(telegram));
     expect(result.outcome).toBe(outcome);
+    expect(result.accepted).toBe(true);
   });
 
   test("does not send Telegram or report success when persistence fails", async () => {
@@ -85,6 +85,7 @@ describe("application service", () => {
     const result = await processApplication(input, deps);
 
     expect(result).toMatchObject({ outcome: "failure", delivery: { telegram: "failed" } });
+    expect(result.accepted).not.toBe(true);
     expect(deps.sendTelegram).not.toHaveBeenCalled();
     expect(deps.deliverOutbox).not.toHaveBeenCalled();
   });
@@ -143,40 +144,21 @@ describe("application service", () => {
     expect(message).toContain(label);
   });
 
-  test("maps a masterclass to Telegram and database fields", async () => {
+  test("maps only an order and selected product links to Telegram and database fields", async () => {
     const deps = dependencies(() => Promise.resolve(sent()));
-    const masterclassInput: ApplicationInput = {
-      ...input,
-      type: "masterclass",
-      masterclassTopic: MASTERCLASS_TOPICS[0],
-      eventDate: "2030-06-20",
-      eventTime: "14:30",
-    };
-
-    const result = await processApplication(masterclassInput, deps);
-
-    expect(result).toMatchObject({ type: "masterclass", outcome: "success" });
+    const result = await processApplication(input, deps);
+    expect(result).toMatchObject({ type: "order", outcome: "success" });
     expect(deps.sendTelegram).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "masterclass",
-        masterclassTopic: MASTERCLASS_TOPICS[0],
-        eventDate: "2030-06-20",
-        eventTime: "14:30",
-        timezone: "Europe/Chisinau",
-      }),
-      expect.stringContaining("🎓 НОВАЯ ЗАПИСЬ НА МАСТЕР-КЛАСС"),
+      expect.objectContaining({ type: "order" }),
+      expect.stringContaining("НОВЫЙ ЗАКАЗ"),
     );
     expect(deps.saveApplication).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "masterclass",
-        masterclassTopic: MASTERCLASS_TOPICS[0],
-        eventDate: "2030-06-20",
-        eventTime: "14:30",
-        products: undefined,
-      }),
+      expect.objectContaining({ type: "order", products: expect.any(Array) }),
       undefined,
       undefined,
     );
+    expect(deps.saveApplication.mock.calls[0][0]).not.toHaveProperty("consultationSlotId");
+    expect(deps.saveApplication.mock.calls[0][0]).not.toHaveProperty("masterclassTopic");
   });
 
   test("replays a completed key without creating or sending again", async () => {
@@ -208,6 +190,7 @@ describe("application service", () => {
     const result = await processApplication(input, deps, { idempotencyKey: "same-key" });
 
     expect(result.outcome).toBe(outcome);
+    expect(result.accepted === true).toBe(disposition === "in_progress");
     expect(deps.sendTelegram).not.toHaveBeenCalled();
   });
 

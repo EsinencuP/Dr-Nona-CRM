@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test, vi } from "vitest";
 
+import { createApplicationsHandler } from "../../server/api/applications-handler";
 import {
   completeApplicationDelivery,
   deleteOrderFromDb,
@@ -10,6 +11,7 @@ import {
   saveMessageIdToDb,
   updateOrderStatusByTelegramMessageId,
 } from "../../server/applications/application-db.js";
+import { processApplication } from "../../server/applications/application-service";
 import {
   cancelTelegramOutbox,
   deliverTelegramOutbox,
@@ -17,10 +19,12 @@ import {
 } from "../../server/applications/telegram-outbox.js";
 import { updateCanonicalClientProfile } from "../../server/clients/client-profile.js";
 import { chisinauLocalMinute, createConsultationSlot } from "../../server/consultations/consultation-slots.js";
+import { proxySignaturePayload, signProxyPayload } from "../../server/http/application-proxy-signature";
 import {
   createApplicationRateLimitGuard,
   createPrismaRateLimitIncrement,
 } from "../../server/http/application-rate-limit.js";
+import { createHash } from "node:crypto";
 
 describe("database and status integration", () => {
   const db = getDbClient();
@@ -51,9 +55,137 @@ describe("database and status integration", () => {
     for (const orderId of idempotencyOrderIds) {
       await deleteOrderFromDb(orderId, db);
     }
-    await db.applicationRateLimitBucket.deleteMany({ where: { clientKey: { in: rateLimitClientKeys } } });
+    await db.applicationRateLimitBucket.deleteMany({
+      where: { clientKey: { in: rateLimitClientKeys } },
+    });
     await db.$disconnect();
   });
+
+  test.each(["ru-MD", "ro-MD"] as const)(
+    "confirms committed %s orders, preserves one order after parallel/lost receipts and never accepts a failed write",
+    async (locale) => {
+      const origin = "https://catalogue.example.test";
+      const secret = "disposable-local-database-test-secret";
+      const key = `receipt-${locale}-${process.pid}-${Date.now()}`;
+      const clientKey = createHash("sha256").update(key).digest("base64url");
+      rateLimitClientKeys.push(clientKey);
+      const persist = vi.fn<typeof saveApplicationToDb>().mockResolvedValue({
+        success: false,
+        disposition: "failure",
+        error: "test outage",
+      });
+      const handler = createApplicationsHandler({
+        environment: () => ({
+          success: true,
+          value: {
+            allowedOrigins: new Set([origin]),
+            proxySharedSecret: secret,
+            telegramBotToken: "test",
+            telegramChatId: "test",
+            telegramManagerUserIds: new Set(),
+          },
+        }),
+        process: (input, deps, context) =>
+          processApplication(
+            input,
+            {
+              ...deps,
+              saveApplication: async (write, _db, idempotency) => {
+                const saved = await persist(write, db, idempotency);
+                if (saved.success && !idempotencyOrderIds.includes(saved.orderId))
+                  idempotencyOrderIds.push(saved.orderId);
+                return saved;
+              },
+              deliverOutbox: (orderId) =>
+                deliverTelegramOutbox(
+                  orderId,
+                  async () => ({
+                    provider: "telegram",
+                    status: "failed",
+                    errorCode: "TEST_PROVIDER_DOWN",
+                    durationMs: 1,
+                  }),
+                  { db },
+                ),
+            },
+            context,
+          ),
+        logger: vi.fn(),
+      });
+      const body = JSON.stringify({
+        locale,
+        type: "order",
+        firstName: "Receipt",
+        lastName: "Test",
+        phone: `+373 7${runSuffix}`,
+        city: "Кишинёв",
+        email: "receipt@example.test",
+        comment: "Receipt test",
+        consentAccepted: true,
+        productSlugs: ["solaris-body-lotion"],
+        items: [{ slug: "solaris-body-lotion", quantity: 3 }],
+      });
+      const request = () => {
+        const timestamp = String(Math.floor(Date.now() / 1000));
+        const hash = createHash("sha256").update(body).digest("base64url");
+        return new Request(`${origin}/api/applications`, {
+          method: "POST",
+          body,
+          headers: {
+            Origin: origin,
+            "Content-Type": "application/json",
+            "Idempotency-Key": key,
+            "x-dr-nona-proxy-version": "1",
+            "x-dr-nona-proxy-timestamp": timestamp,
+            "x-dr-nona-client-key": clientKey,
+            "x-dr-nona-proxy-signature": signProxyPayload(secret, proxySignaturePayload(timestamp, clientKey, hash)),
+          },
+        });
+      };
+      const failed = await handler(request());
+      expect(failed.status).toBe(502);
+      expect(await failed.json()).not.toHaveProperty("accepted", true);
+      persist.mockImplementation((write, _db, idempotency) => saveApplicationToDb(write, db, idempotency));
+      const responses = await Promise.all([handler(request()), handler(request()), handler(request())]);
+      const receipts = await Promise.all(responses.map((response) => response.json()));
+      expect(receipts.every((receipt) => receipt.accepted === true && receipt.ok === true)).toBe(true);
+      const ids = [...new Set<string>(receipts.map((receipt) => receipt.requestId))];
+      expect(ids).toHaveLength(1);
+      expect(await db.order.count({ where: { id: { in: ids } } })).toBe(1);
+      const order = await db.order.findUniqueOrThrow({
+        where: { id: ids[0] },
+        include: { items: true, telegramOutbox: true },
+      });
+      expect(order).toMatchObject({
+        type: "order",
+        locale,
+        submittedFirstName: "Receipt",
+        submittedEmail: "receipt@example.test",
+        submittedRegion: "Кишинёв",
+        comment: "Receipt test",
+        items: [
+          expect.objectContaining({
+            productSlug: "solaris-body-lotion",
+            quantity: 3,
+          }),
+        ],
+      });
+      expect(order.telegramOutbox?.payload).toContain("Solaris Body Lotion × 3");
+      expect(order.telegramOutbox?.payload).toContain("413001");
+      expect(order.telegramOutbox?.payload).toContain(
+        `${origin}/${locale === "ro-MD" ? "ro" : "ru"}/product/solaris-body-lotion`,
+      );
+      const replay = await handler(request());
+      expect(await replay.json()).toMatchObject({
+        ok: true,
+        accepted: true,
+        requestId: ids[0],
+      });
+      expect(await db.order.count({ where: { id: { in: ids } } })).toBe(1);
+      for (const id of ids) await deleteOrderFromDb(id, db);
+    },
+    20_000,
+  );
 
   test("persists an order and every lifecycle status transition", async () => {
     const orderId = `test-order-lifecycle-${process.pid}-${Date.now()}`;
@@ -72,7 +204,11 @@ describe("database and status integration", () => {
       },
       db,
     );
-    expect(saveResult).toEqual({ success: true, orderId, disposition: "created" });
+    expect(saveResult).toEqual({
+      success: true,
+      orderId,
+      disposition: "created",
+    });
 
     await saveMessageIdToDb(orderId, telegramMessageId, db);
 
@@ -106,7 +242,12 @@ describe("database and status integration", () => {
 
     await expect(updateOrderStatusByTelegramMessageId(telegramMessageId, "CANCELLED", db)).resolves.toBe(false);
     await expect(db.orderStatusAudit.count({ where: { orderId } })).resolves.toBe(3);
-    await expect(db.order.findUnique({ where: { id: orderId }, select: { firstActionAt: true } })).resolves.toEqual({
+    await expect(
+      db.order.findUnique({
+        where: { id: orderId },
+        select: { firstActionAt: true },
+      }),
+    ).resolves.toEqual({
       firstActionAt: expect.any(Date),
     });
 
@@ -208,14 +349,18 @@ describe("database and status integration", () => {
       ),
     ).resolves.toMatchObject({ success: true });
 
-    const client = await db.client.findUniqueOrThrow({ where: { phoneNormalized: testPhoneNormalized } });
+    const client = await db.client.findUniqueOrThrow({
+      where: { phoneNormalized: testPhoneNormalized },
+    });
     expect(client).toMatchObject({
       firstName: "Ana",
       lastName: "Popescu",
       email: "ana@example.test",
       region: "Кишинёв",
     });
-    const repeated = await db.order.findUniqueOrThrow({ where: { id: secondId } });
+    const repeated = await db.order.findUniqueOrThrow({
+      where: { id: secondId },
+    });
     expect(repeated).toMatchObject({
       submittedFirstName: "Anna typo",
       submittedLastName: "Popesku typo",
@@ -238,7 +383,9 @@ describe("database and status integration", () => {
         db,
       ),
     ).resolves.toEqual({ outcome: "updated" });
-    const audit = await db.clientProfileAudit.findFirstOrThrow({ where: { clientId: client.id } });
+    const audit = await db.clientProfileAudit.findFirstOrThrow({
+      where: { clientId: client.id },
+    });
     expect(audit).toMatchObject({ actor: "integration-manager" });
     expect(audit.before).toMatchObject({ firstName: "Ana" });
     expect(audit.after).toMatchObject({ firstName: "Ana-Maria" });
@@ -277,7 +424,12 @@ describe("database and status integration", () => {
 
   test("snapshots both fixed prices and never rewrites old items after catalogue changes", async () => {
     await db.productCatalog.create({
-      data: { slug: priceTestSlug, sku: "TEST", retailPrice: 125.5, distributorPrice: 80.25 },
+      data: {
+        slug: priceTestSlug,
+        sku: "TEST",
+        retailPrice: 125.5,
+        distributorPrice: 80.25,
+      },
     });
     const firstId = `test-prices-first-${process.pid}-${Date.now()}`;
     const input = {
@@ -306,14 +458,21 @@ describe("database and status integration", () => {
       orderId: secondId,
       disposition: "created",
     });
-    const first = await db.orderItem.findFirstOrThrow({ where: { orderId: firstId } });
-    const second = await db.orderItem.findFirstOrThrow({ where: { orderId: secondId } });
+    const first = await db.orderItem.findFirstOrThrow({
+      where: { orderId: firstId },
+    });
+    const second = await db.orderItem.findFirstOrThrow({
+      where: { orderId: secondId },
+    });
     expect(first).toMatchObject({
       retailPriceAtPurchase: 125.5,
       distributorPriceAtPurchase: 80.25,
       priceAtPurchase: 125.5,
     });
-    expect(second).toMatchObject({ retailPriceAtPurchase: 140, distributorPriceAtPurchase: 90 });
+    expect(second).toMatchObject({
+      retailPriceAtPurchase: 140,
+      distributorPriceAtPurchase: 90,
+    });
     await deleteOrderFromDb(firstId, db);
     await deleteOrderFromDb(secondId, db);
   }, 20_000);
@@ -369,12 +528,20 @@ describe("database and status integration", () => {
     const retryId = `test-idempotency-retry-${suffix}`;
     const retryContext = { ...context, keyHash: `${context.keyHash}-retry` };
     const initialRetry = await saveApplicationToDb({ ...base, requestId: retryId }, db, retryContext);
-    expect(initialRetry).toMatchObject({ success: true, orderId: retryId, disposition: "created" });
+    expect(initialRetry).toMatchObject({
+      success: true,
+      orderId: retryId,
+      disposition: "created",
+    });
     idempotencyOrderIds.push(retryId);
     await expect(markApplicationDeliveryFailed(retryId, "NETWORK_ERROR", db)).resolves.toBe(true);
     await expect(
       saveApplicationToDb({ ...base, requestId: `test-idempotency-unused-${suffix}` }, db, retryContext),
-    ).resolves.toEqual({ success: true, orderId: retryId, disposition: "retry" });
+    ).resolves.toEqual({
+      success: true,
+      orderId: retryId,
+      disposition: "retry",
+    });
 
     const expiredFirstId = `test-idempotency-expired-a-${suffix}`;
     const expiredSecondId = `test-idempotency-expired-b-${suffix}`;
@@ -395,7 +562,11 @@ describe("database and status integration", () => {
       now: new Date("2030-01-01T00:00:02.000Z"),
       expiresAt: new Date("2030-01-02T00:00:02.000Z"),
     });
-    expect(reused).toMatchObject({ success: true, orderId: expiredSecondId, disposition: "created" });
+    expect(reused).toMatchObject({
+      success: true,
+      orderId: expiredSecondId,
+      disposition: "created",
+    });
     idempotencyOrderIds.push(expiredFirstId, expiredSecondId);
   }, 60_000);
 
@@ -406,15 +577,30 @@ describe("database and status integration", () => {
       .slice(0, 43);
     rateLimitClientKeys.push(clientKey);
     const increment = createPrismaRateLimitIncrement(db);
-    const firstInstance = createApplicationRateLimitGuard({ limit: 2, now: () => 1_800_000_000_000, increment });
-    const secondInstance = createApplicationRateLimitGuard({ limit: 2, now: () => 1_800_000_000_000, increment });
+    const firstInstance = createApplicationRateLimitGuard({
+      limit: 2,
+      now: () => 1_800_000_000_000,
+      increment,
+    });
+    const secondInstance = createApplicationRateLimitGuard({
+      limit: 2,
+      now: () => 1_800_000_000_000,
+      increment,
+    });
     const signedRequest = new Request("https://crm.example/api/applications", {
       headers: { "x-dr-nona-client-key": clientKey },
     });
 
-    await expect(firstInstance(signedRequest)).resolves.toMatchObject({ allowed: true });
-    await expect(secondInstance(signedRequest)).resolves.toMatchObject({ allowed: true });
-    await expect(firstInstance(signedRequest)).resolves.toMatchObject({ allowed: false, reason: "limit" });
+    await expect(firstInstance(signedRequest)).resolves.toMatchObject({
+      allowed: true,
+    });
+    await expect(secondInstance(signedRequest)).resolves.toMatchObject({
+      allowed: true,
+    });
+    await expect(firstInstance(signedRequest)).resolves.toMatchObject({
+      allowed: false,
+      reason: "limit",
+    });
     await expect(db.applicationRateLimitBucket.count({ where: { clientKey } })).resolves.toBe(1);
   }, 20_000);
 
@@ -458,9 +644,19 @@ describe("database and status integration", () => {
       durationMs: 1,
     }));
     await expect(
-      deliverTelegramOutbox(orderId, sentSender, { db, now: new Date(start.getTime() + 61_000) }),
-    ).resolves.toMatchObject({ delivery: "sent", state: "DELIVERED", attempts: 2 });
-    await deliverTelegramOutbox(orderId, sentSender, { db, now: new Date(start.getTime() + 120_000) });
+      deliverTelegramOutbox(orderId, sentSender, {
+        db,
+        now: new Date(start.getTime() + 61_000),
+      }),
+    ).resolves.toMatchObject({
+      delivery: "sent",
+      state: "DELIVERED",
+      attempts: 2,
+    });
+    await deliverTelegramOutbox(orderId, sentSender, {
+      db,
+      now: new Date(start.getTime() + 120_000),
+    });
     expect(sentSender).toHaveBeenCalledOnce();
     await deleteOrderFromDb(orderId, db);
   }, 20_000);
@@ -484,13 +680,23 @@ describe("database and status integration", () => {
     await expect(
       deliverTelegramOutbox(
         orderId,
-        async () => ({ provider: "telegram", status: "failed", errorCode: "NETWORK_ERROR", durationMs: 1 }),
+        async () => ({
+          provider: "telegram",
+          status: "failed",
+          errorCode: "NETWORK_ERROR",
+          durationMs: 1,
+        }),
         { db, now: new Date("2030-01-01T00:00:00.000Z") },
       ),
     ).resolves.toMatchObject({ delivery: "failed", state: "NEEDS_REVIEW" });
     await expect(rearmTelegramOutbox(orderId, db)).resolves.toBe(true);
     await expect(cancelTelegramOutbox(orderId, db)).resolves.toBe(true);
-    await expect(db.telegramOutbox.findUnique({ where: { orderId }, select: { state: true } })).resolves.toEqual({
+    await expect(
+      db.telegramOutbox.findUnique({
+        where: { orderId },
+        select: { state: true },
+      }),
+    ).resolves.toEqual({
       state: "CANCELLED",
     });
     await deleteOrderFromDb(orderId, db);

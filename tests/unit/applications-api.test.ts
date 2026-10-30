@@ -60,6 +60,7 @@ describe("POST /api/applications", () => {
         type: "order" as const,
         delivery: { telegram: "sent" as const },
         outcome: "success" as const,
+        accepted: true as const,
       }));
       const response = await handler(
         {
@@ -67,6 +68,7 @@ describe("POST /api/applications", () => {
           type: "order",
           delivery: { telegram: "sent" },
           outcome: "success",
+          accepted: true,
         },
         { process },
       )(request({ ...validBody, locale }));
@@ -86,6 +88,7 @@ describe("POST /api/applications", () => {
         type: "order" as const,
         delivery: { telegram: "sent" as const },
         outcome: "success" as const,
+        accepted: true as const,
       },
     ],
     [
@@ -112,6 +115,7 @@ describe("POST /api/applications", () => {
       type: "order",
       delivery: { telegram: "sent" },
       outcome: "success",
+      accepted: true,
     })(request({ ...validBody, phone: "bad" }));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({
@@ -120,12 +124,13 @@ describe("POST /api/applications", () => {
     });
   });
 
-  test("accepts and forwards a valid masterclass application", async () => {
+  test("rejects a retired masterclass application before processing", async () => {
     const process = vi.fn(async () => ({
       requestId: "request-masterclass",
       type: "masterclass" as const,
       delivery: { telegram: "sent" as const },
       outcome: "success" as const,
+      accepted: true as const,
     }));
     const response = await handler(
       {
@@ -133,6 +138,7 @@ describe("POST /api/applications", () => {
         type: "masterclass",
         delivery: { telegram: "sent" },
         outcome: "success",
+        accepted: true,
       },
       { process },
     )(
@@ -147,17 +153,8 @@ describe("POST /api/applications", () => {
       }),
     );
 
-    expect(response.status).toBe(201);
-    expect(process).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "masterclass",
-        masterclassTopic: MASTERCLASS_TOPICS[1],
-        eventDate: validMasterclassDate,
-        eventTime: "14:30",
-      }),
-      expect.any(Object),
-      { idempotencyKey: "attempt-1" },
-    );
+    expect(response.status).toBe(400);
+    expect(process).not.toHaveBeenCalled();
   });
 
   test("returns 403 for an invalid Origin", async () => {
@@ -166,6 +163,7 @@ describe("POST /api/applications", () => {
       type: "order" as const,
       delivery: { telegram: "sent" as const },
       outcome: "success" as const,
+      accepted: true as const,
     };
     expect((await handler(result)(request(validBody, { headers: { Origin: "https://evil.test" } }))).status).toBe(403);
   });
@@ -176,6 +174,7 @@ describe("POST /api/applications", () => {
       type: "order",
       delivery: { telegram: "sent" },
       outcome: "success",
+      accepted: true,
     })(request(undefined, { method: "GET" }));
     expect(response.status).toBe(405);
     expect(response.headers.get("Allow")).toBe("POST");
@@ -187,6 +186,7 @@ describe("POST /api/applications", () => {
       type: "order",
       delivery: { telegram: "sent" },
       outcome: "success",
+      accepted: true,
     })(
       request(validBody, {
         headers: { "Content-Length": String(20 * 1024) },
@@ -213,6 +213,7 @@ describe("POST /api/applications", () => {
         type: "order",
         delivery: { telegram: "sent" },
         outcome: "success",
+        accepted: true,
       },
       { rateLimitGuard: async () => false },
     )(request());
@@ -227,6 +228,7 @@ describe("POST /api/applications", () => {
         type: "order",
         delivery: { telegram: "sent" },
         outcome: "success",
+        accepted: true,
       },
       { rateLimitGuard: async () => ({ allowed: false, retryAfterSeconds: 30, reason: "store_unavailable" }) },
     )(request());
@@ -244,6 +246,7 @@ describe("POST /api/applications", () => {
         type: "order",
         delivery: { telegram: "sent" },
         outcome: "success",
+        accepted: true,
       },
       {
         process,
@@ -275,6 +278,7 @@ describe("POST /api/applications", () => {
       type: "order" as const,
       delivery: { telegram: "sent" as const },
       outcome: "success" as const,
+      accepted: true as const,
     }));
     const limitedHandler = createApplicationsHandler({
       environment: () => ({ success: true, value: environment }),
@@ -340,6 +344,7 @@ describe("POST /api/applications", () => {
         type: "order",
         delivery: { telegram: "sent" },
         outcome: "success",
+        accepted: true,
       },
       { logger },
     )(request());
@@ -365,14 +370,86 @@ describe("POST /api/applications", () => {
       type: "order",
       delivery: { telegram: "pending" },
       outcome: "in_progress",
+      accepted: true,
     })(request());
 
     expect(response.status).toBe(202);
     expect(await response.json()).toMatchObject({
       ok: true,
-      code: "REQUEST_ACCEPTED",
+      accepted: true,
       delivery: { telegram: "pending" },
     });
-    expect(response.headers.get("Retry-After")).toBe("30");
+    expect(response.headers.get("Retry-After")).toBeNull();
+  });
+});
+
+test.each(["consultation", "masterclass"])("retired public %s requests never reach the service", async (type) => {
+  const process = vi.fn();
+  const response = await handler(
+    { requestId: "unused", type: "order", delivery: { telegram: "sent" }, outcome: "success" },
+    { process },
+  )(request({ ...validBody, type }));
+  expect(response.status).toBe(400);
+  expect(process).not.toHaveBeenCalled();
+});
+test("reconstructs product URLs from the verified catalogue origin and locale", async () => {
+  const process = vi.fn(async (_input: unknown, _dependencies: unknown, _context: unknown) => {
+    void _input;
+    void _dependencies;
+    void _context;
+    return {
+      requestId: "order-links",
+      type: "order" as const,
+      delivery: { telegram: "sent" as const },
+      outcome: "success" as const,
+      accepted: true as const,
+    };
+  });
+  const response = await handler(
+    { requestId: "order-links", type: "order", delivery: { telegram: "sent" }, outcome: "success" },
+    { process },
+  )(request({ ...validBody, locale: "ro-MD" }));
+  expect(response.status).toBe(201);
+  const dependencies = process.mock.calls[0][1] as { productsBySlug: ReadonlyMap<string, { url?: string }> };
+  expect(dependencies.productsBySlug.get("lord-deodorant")?.url).toBe("https://example.test/ro/product/lord-deodorant");
+});
+
+test("pending delivery never returns a confirmed 201 receipt", async () => {
+  const response = await handler({
+    requestId: "pending-order",
+    type: "order",
+    delivery: { telegram: "pending" },
+    outcome: "success",
+    accepted: true,
+  })(request());
+  expect(response.status).toBe(202);
+  expect(await response.json()).toMatchObject({ accepted: true, delivery: { telegram: "pending" } });
+});
+
+test("an unconfirmed service result never acknowledges CRM acceptance", async () => {
+  const response = await handler({
+    requestId: "uncommitted",
+    type: "order",
+    delivery: { telegram: "sent" },
+    outcome: "success",
+  })(request());
+  expect(response.status).toBe(502);
+  expect(await response.json()).not.toHaveProperty("accepted", true);
+});
+
+test("acknowledges a committed order even if its Telegram notification failed", async () => {
+  const response = await handler({
+    accepted: true,
+    requestId: "saved",
+    type: "order",
+    delivery: { telegram: "failed" },
+    outcome: "success",
+  })(request());
+  expect(response.status).toBe(202);
+  expect(await response.json()).toMatchObject({
+    ok: true,
+    accepted: true,
+    requestId: "saved",
+    delivery: { telegram: "failed" },
   });
 });
